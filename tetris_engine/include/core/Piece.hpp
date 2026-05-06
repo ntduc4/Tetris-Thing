@@ -19,6 +19,8 @@ public:
   void rotate_to(Rotation new_rotation);
   Rotation rotation() const;
 
+  std::vector<Offset> current_shape() const;
+
   std::array<std::array<Cell, PieceDimension>, PieceDimension> render() const;
 
 private:

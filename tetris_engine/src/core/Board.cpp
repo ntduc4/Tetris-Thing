@@ -1,5 +1,6 @@
 #include "core/Board.hpp"
 #include "core/Core.hpp"
+#include "core/Piece.hpp"
 #include <vector>
 
 namespace tetris {
@@ -35,8 +36,6 @@ bool Board::occupied(uint16_t row, uint16_t col) const {
   return this->_cells[i] != Cell::Empty;
 }
 
-uint16_t Board::clear_lines() {};
-
 uint16_t Board::column_height(uint16_t col) const {
   if (col >= _width)
     return _height;
@@ -47,7 +46,6 @@ uint16_t Board::column_height(uint16_t col) const {
   }
   return 0;
 }
-uint16_t Board::aggregate_height() const {}
 
 uint16_t Board::max_height() const {
   for (size_t i = _cells.size() - 1; i >= 0; i--) {
@@ -57,10 +55,42 @@ uint16_t Board::max_height() const {
   return 0;
 }
 
-bool Board::topout_zone_blocked() const {}
+bool Board::spawnable(ActivePiece piece) const {
+  std::vector<Offset> piece_shape = piece.piece.current_shape();
+  for (Offset offset : piece_shape) {
+    int16_t row = offset.row + piece.pos.row;
+    if (row < 0 || row >= _height)
+      return false;
+    int16_t col = offset.col + piece.pos.col;
+    if (col < 0 || col >= _width)
+      return false;
+    const size_t i = row * _width + col;
+    if (_cells[i] != Cell::Empty)
+      return false;
+  }
+  return true;
+}
+
+std::vector<std::vector<Cell>> Board::render() const {
+  std::vector<std::vector<Cell>> res(this->_height);
+  for (int i = 0; i < this->_height; i++) {
+    res[i] = std::vector<Cell>(this->_width, Cell::Empty);
+  }
+
+  for (uint16_t row = 0; row < this->_height; row++) {
+    for (uint16_t col = 0; col < this->_width; col++) {
+      if (_cells[row * _width + col] != Cell::Empty)
+        res[row][col] = _cells[row * _width + col];
+    }
+  }
+
+  return res;
+}
+
+uint16_t Board::clear_lines() {};
+
+uint16_t Board::aggregate_height() const {}
 
 void Board::addGarbage(uint16_t freeCol) {}
-
-std::vector<std::vector<Cell>> Board::render() const {}
 
 } // namespace tetris

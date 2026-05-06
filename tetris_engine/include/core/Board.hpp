@@ -1,5 +1,6 @@
 #pragma once
 #include "Core.hpp"
+#include "core/Piece.hpp"
 #include <cstdint>
 #include <vector>
 
@@ -20,7 +21,7 @@ public:
   uint16_t aggregate_height() const;
   uint16_t max_height() const;
 
-  bool topout_zone_blocked() const;
+  bool spawnable(ActivePiece piece) const;
 
   void addGarbage(uint16_t freeCol);
 
