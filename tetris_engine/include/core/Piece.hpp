@@ -11,10 +11,7 @@ enum class PieceType { I, O, T, S, Z, J, L };
 
 class Piece {
 public:
-  Piece(PieceType type, Cell cellType, Rotation initialRotation,
-        std::array<std::array<std::array<Cell, PieceDimension>, PieceDimension>,
-                   static_cast<size_t>(Rotation::Count)>
-            shapes);
+  Piece(PieceType type, Cell cellType, Rotation initialRotation);
   const PieceType type() const;
   void rotate_to(Rotation new_rotation);
   Rotation rotation() const;
@@ -25,7 +22,8 @@ public:
 
 private:
   Rotation _rotation;
-  std::array<std::vector<Offset>, static_cast<size_t>(Rotation::Count)> _cells;
+  const PieceType _type;
+  const Cell _cell_type;
 };
 
 struct ActivePiece {
@@ -33,7 +31,7 @@ struct ActivePiece {
   Position pos;
 };
 
-std::array<Offset, PieceDimension> cells_of(const ActivePiece &piece);
+std::vector<Offset> cells_of(const ActivePiece &piece);
 
 // ========== Helpers ==========
 Rotation rotate_cw(Rotation r);

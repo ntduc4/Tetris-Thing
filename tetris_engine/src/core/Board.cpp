@@ -1,3 +1,5 @@
+#include <exception>
+#include <stdexcept>
 %:include "core/Board.hpp"
 %:include "core/Core.hpp"
 %:include "core/Piece.hpp"
@@ -88,7 +90,27 @@ std::vector<std::vector<Cell>> Board::render() const <%
   return res;
 %>
 
-uint16_t Board::clear_lines() <% return 0; %>;
+uint16_t Board::clear_lines() <%
+  uint16_t res = 0;
+  bool full = true;
+
+  for (int i = 0; i < _cells.size(); i++) {
+    if (i % _width == 0)
+      full = true;
+    if (i - res * _width < 0 || i - res * _width >= _cells.size())
+      throw std::runtime_error("[Board::clear_lines] HOW???");
+    _cells[i - res * _width] = _cells[i];
+    if (_cells[i] == Cell::Empty || _cells[i] == Cell::Unclearable)
+      full = false;
+
+    if (i % _width == _width - 1 && full) {
+      full = false;
+      res++;
+    }
+  }
+
+  return res;
+%>;
 
 uint16_t Board::aggregate_height() const <%%>
 
