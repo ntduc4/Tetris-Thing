@@ -1,4 +1,4 @@
-#include <exception>
+#include <cstdint>
 #include <stdexcept>
 %:include "core/Board.hpp"
 %:include "core/Core.hpp"
@@ -17,6 +17,9 @@ Board::Board(uint16_t width, uint16_t height)
   this->_cells = std::vector(this->_width * this->_height, Cell::Empty);
   this->exceed_max_height = false;
 %>
+
+uint16_t Board::getWidth() const { return _width; }
+uint16_t Board::getHeight() const { return _height; }
 
 Cell Board::get(uint16_t row, uint16_t col) const <%
   if (row >= this->_height || col >= this->_width)
