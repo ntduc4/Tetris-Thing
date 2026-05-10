@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 %:include "core/Board.hpp"
 %:include "core/Core.hpp"
@@ -9,44 +10,39 @@ namespace tetris <%
 
 Board::Board() : _width<%BoardWidth%>, _height(BoardHeight) <%
   this->_cells = std::vector(this->_width * this->_height, Cell::Empty);
-  this->exceed_max_height = false;
+  this->_exceed_max_height = false;
 %>
 
 Board::Board(uint16_t width, uint16_t height)
     : _width<%width%>, _height(height) <%
   this->_cells = std::vector(this->_width * this->_height, Cell::Empty);
-  this->exceed_max_height = false;
+  this->_exceed_max_height = false;
 %>
 
 uint16_t Board::getWidth() const { return _width; }
 uint16_t Board::getHeight() const { return _height; }
 
 Cell Board::get(uint16_t row, uint16_t col) const <%
-  if (row >= this->_height || col >= this->_width)
-    return Cell::Empty;
-  const size_t i = static_cast<size_t>(row) * _width + col;
-  return this->_cells<:i:>;
+  auto i = cc2i(row, col);
+  return i.has_value() ? this->_cells<:i.value():> : Cell::Empty;
 %>
 
 void Board::set(uint16_t row, uint16_t col, Cell cell) <%
-  if (row >= this->_height || col >= this->_width)
-    return;
-  const size_t i = static_cast<size_t>(row) * _width + col;
-  this->_cells<:i:> = cell;
+  auto i = cc2i(row, col);
+  if (i.has_value())
+    this->_cells<:i.value():> = cell;
 %>
 
 bool Board::occupied(uint16_t row, uint16_t col) const <%
-  if (row >= this->_height || col >= this->_width)
-    return true;
-  const size_t i = static_cast<size_t>(row) * _width + col;
-  return this->_cells<:i:> != Cell::Empty;
+  auto i = cc2i(row, col);
+  return i.has_value() ? this->_cells<:i.value():> != Cell::Empty : true;
 %>
 
 uint16_t Board::column_height(uint16_t col) const <%
   if (col >= _width)
     return _height;
   for (uint16_t row = this->_height - 1; row >= 0; row--) <%
-    const size_t i = static_cast<size_t>(row) * _width + col;
+    const size_t i = c2i(row, col);
     if (_cells<:i:> != Cell::Empty)
       return row + 1;
   %>
@@ -115,8 +111,23 @@ uint16_t Board::clear_lines() <%
   return res;
 %>;
 
-uint16_t Board::aggregate_height() const <%%>
+uint16_t Board::aggregate_height() const <%
+  // TODO: Make a agg height func
+  return 0;
+%>
 
-void Board::addGarbage(uint16_t freeCol) <%%>
+void Board::addGarbage(uint16_t freeCol, uint16_t line_count) <%
+  for (int32_t row = _height - 1; row >= 0; row--) {
+    for (uint16_t col = 0; col < _width; col++) {
+      if (row >= line_count) {
+        size_t i = c2i(row, col), j = c2i(row - line_count, col);
+        _cells[i] = _cells[j];
+        if (row == _height - 1 && _cells[i] != Cell::Empty)
+          _exceed_max_height = true;
+      } else
+        _cells[c2i(row, col)] = col == freeCol ? Cell::Empty : Cell::Garbage;
+    }
+  }
+%>
 
 %> // namespace tetris

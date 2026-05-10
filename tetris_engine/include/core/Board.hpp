@@ -1,7 +1,9 @@
 #pragma once
 #include "Core.hpp"
 #include "core/Piece.hpp"
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace tetris {
@@ -26,13 +28,24 @@ public:
 
   bool spawnable(ActivePiece piece) const;
 
-  void addGarbage(uint16_t freeCol);
+  void addGarbage(uint16_t freeCol, uint16_t line_count);
 
   std::vector<std::vector<Cell>> render() const;
 
 private:
   const uint16_t _width, _height;
   std::vector<Cell> _cells;
-  bool exceed_max_height;
+  bool _exceed_max_height = false;
+
+  // coordinate-to-index
+  inline size_t c2i(uint16_t row, uint16_t col) const {
+    return static_cast<size_t>(row) * _width + col;
+  };
+  // (bounded-)checked-coordinate-to-index
+  inline std::optional<size_t> cc2i(uint16_t row, uint16_t col) const {
+    if (row >= this->_height || col >= this->_width)
+      return std::nullopt;
+    return c2i(row, col);
+  };
 };
 } // namespace tetris
