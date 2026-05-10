@@ -25,6 +25,7 @@ public:
   uint16_t column_height(uint16_t col) const;
   uint16_t aggregate_height() const;
   uint16_t max_height() const;
+  inline bool touch_max_height() const { return _touch_max_height; }
 
   bool spawnable(ActivePiece piece) const;
 
@@ -35,7 +36,7 @@ public:
 private:
   const uint16_t _width, _height;
   std::vector<Cell> _cells;
-  bool _exceed_max_height = false;
+  bool _touch_max_height = false;
 
   // coordinate-to-index
   inline size_t c2i(uint16_t row, uint16_t col) const {
