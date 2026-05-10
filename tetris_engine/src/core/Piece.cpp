@@ -60,14 +60,14 @@ constexpr std::array<std::array<Offset, 4>,
 
 constexpr std::array<std::array<Offset, 4>,
                      static_cast<size_t>(Rotation::Count)>
-    LPiece = {{{Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0},
-                Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0}},
-               {Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0},
-                Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0}},
-               {Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0},
-                Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0}},
-               {Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0},
-                Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0}}}};
+    LPiece = {{{Offset{.row = 3, .col = 2}, Offset{.row = 2, .col = 0},
+                Offset{.row = 2, .col = 1}, Offset{.row = 2, .col = 2}},
+               {Offset{.row = 1, .col = 2}, Offset{.row = 3, .col = 1},
+                Offset{.row = 2, .col = 1}, Offset{.row = 1, .col = 1}},
+               {Offset{.row = 1, .col = 0}, Offset{.row = 2, .col = 0},
+                Offset{.row = 2, .col = 1}, Offset{.row = 2, .col = 2}},
+               {Offset{.row = 3, .col = 0}, Offset{.row = 3, .col = 1},
+                Offset{.row = 2, .col = 1}, Offset{.row = 1, .col = 1}}}};
 
 constexpr std::array<std::array<Offset, 4>,
                      static_cast<size_t>(Rotation::Count)>
