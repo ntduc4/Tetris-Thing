@@ -7,7 +7,7 @@ int main(int argc, char *argv[]) {
 
   for (auto rotation :
        {Rotation::North, Rotation::East, Rotation::South, Rotation::West}) {
-    Piece s = Piece(PieceType::S, Cell::S, rotation);
+    Piece s = Piece(PieceType::T, Cell::T, rotation);
     auto piece_shape = s.render();
     for (int i = piece_shape.size() - 1; i >= 0; i--) {
       auto row = piece_shape[i];
