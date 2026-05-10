@@ -49,14 +49,14 @@ constexpr std::array<std::array<Offset, 4>,
 
 constexpr std::array<std::array<Offset, 4>,
                      static_cast<size_t>(Rotation::Count)>
-    ZPiece = {{{Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0},
-                Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0}},
-               {Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0},
-                Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0}},
-               {Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0},
-                Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0}},
-               {Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0},
-                Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0}}}};
+    ZPiece = {{{Offset{.row = 3, .col = 0}, Offset{.row = 3, .col = 1},
+                Offset{.row = 2, .col = 1}, Offset{.row = 2, .col = 2}},
+               {Offset{.row = 3, .col = 2}, Offset{.row = 2, .col = 2},
+                Offset{.row = 2, .col = 1}, Offset{.row = 1, .col = 1}},
+               {Offset{.row = 2, .col = 0}, Offset{.row = 2, .col = 1},
+                Offset{.row = 1, .col = 1}, Offset{.row = 1, .col = 2}},
+               {Offset{.row = 3, .col = 1}, Offset{.row = 2, .col = 1},
+                Offset{.row = 2, .col = 0}, Offset{.row = 1, .col = 0}}}};
 
 constexpr std::array<std::array<Offset, 4>,
                      static_cast<size_t>(Rotation::Count)>
@@ -71,14 +71,14 @@ constexpr std::array<std::array<Offset, 4>,
 
 constexpr std::array<std::array<Offset, 4>,
                      static_cast<size_t>(Rotation::Count)>
-    JPiece = {{{Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0},
-                Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0}},
-               {Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0},
-                Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0}},
-               {Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0},
-                Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0}},
-               {Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0},
-                Offset{.row = 0, .col = 0}, Offset{.row = 0, .col = 0}}}};
+    JPiece = {{{Offset{.row = 3, .col = 0}, Offset{.row = 2, .col = 0},
+                Offset{.row = 2, .col = 1}, Offset{.row = 2, .col = 2}},
+               {Offset{.row = 3, .col = 2}, Offset{.row = 3, .col = 1},
+                Offset{.row = 2, .col = 1}, Offset{.row = 1, .col = 1}},
+               {Offset{.row = 1, .col = 2}, Offset{.row = 2, .col = 0},
+                Offset{.row = 2, .col = 1}, Offset{.row = 2, .col = 2}},
+               {Offset{.row = 1, .col = 0}, Offset{.row = 3, .col = 1},
+                Offset{.row = 2, .col = 1}, Offset{.row = 1, .col = 1}}}};
 
 Piece::Piece(PieceType type, Cell cellType, Rotation initialRotation)
     : _type{type}, _cell_type{cellType}, _rotation{initialRotation} {}
