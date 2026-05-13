@@ -1,6 +1,7 @@
 #include "core/Piece.hpp"
 #include "core/Core.hpp"
 #include <array>
+#include <cstdint>
 
 namespace tetris {
 constexpr std::array<std::array<Offset, 4>,
@@ -80,39 +81,30 @@ constexpr std::array<std::array<Offset, 4>,
                {Offset{.row = 1, .col = 0}, Offset{.row = 3, .col = 1},
                 Offset{.row = 2, .col = 1}, Offset{.row = 1, .col = 1}}}};
 
-Piece::Piece(PieceType type, Cell cellType, Rotation initialRotation)
-    : _type{type}, _cell_type{cellType}, _rotation{initialRotation} {}
-
-const PieceType Piece::type() const { return _type; }
-
-void Piece::rotate_to(Rotation new_rotation) { _rotation = new_rotation; }
-
-Rotation Piece::rotation() const { return _rotation; }
-
 std::vector<Offset> Piece::current_shape() const {
   std::array<std::array<Offset, 4>, static_cast<size_t>(Rotation::Count)>
       curShape;
 
   switch (_type) {
-  case tetris::PieceType::I:
+  case PieceType::I:
     curShape = IPiece;
     break;
-  case tetris::PieceType::T:
+  case PieceType::T:
     curShape = TPiece;
     break;
-  case tetris::PieceType::O:
+  case PieceType::O:
     curShape = OPiece;
     break;
-  case tetris::PieceType::J:
+  case PieceType::J:
     curShape = JPiece;
     break;
-  case tetris::PieceType::L:
+  case PieceType::L:
     curShape = LPiece;
     break;
-  case tetris::PieceType::S:
+  case PieceType::S:
     curShape = SPiece;
     break;
-  case tetris::PieceType::Z:
+  case PieceType::Z:
     curShape = ZPiece;
     break;
   }
@@ -134,6 +126,64 @@ Piece::render() const {
   }
 
   return res;
+}
+
+Cell get_cell_from_piece_type(PieceType type) {
+  switch (type) {
+  case PieceType::I:
+    return Cell::I;
+  case PieceType::T:
+    return Cell::T;
+  case PieceType::O:
+    return Cell::O;
+  case PieceType::J:
+    return Cell::J;
+  case PieceType::L:
+    return Cell::L;
+  case PieceType::S:
+    return Cell::S;
+  case PieceType::Z:
+    return Cell::Z;
+  default:
+    return Cell::Empty;
+  }
+}
+
+Piece get_from_piece_type(PieceType type) {
+  std::array<std::array<Offset, 4>, static_cast<size_t>(Rotation::Count)>
+      curShape;
+
+  switch (type) {
+  case PieceType::I:
+    curShape = IPiece;
+    break;
+  case PieceType::T:
+    curShape = TPiece;
+    break;
+  case PieceType::O:
+    curShape = OPiece;
+    break;
+  case PieceType::J:
+    curShape = JPiece;
+    break;
+  case PieceType::L:
+    curShape = LPiece;
+    break;
+  case PieceType::S:
+    curShape = SPiece;
+    break;
+  case PieceType::Z:
+    curShape = ZPiece;
+    break;
+  }
+
+  return Piece(type, get_cell_from_piece_type(type), DefaultRotation);
+}
+
+ActivePiece spawn_from_piece_type(PieceType type) {
+  return {.piece = get_from_piece_type(type),
+          .pos = Position{.row = DefaultSpawnRowOffset,
+                          .col = DefaultSpawnColOffset}};
 }
 
 } // namespace tetris

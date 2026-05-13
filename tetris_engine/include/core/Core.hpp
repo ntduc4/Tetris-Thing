@@ -6,8 +6,8 @@ constexpr uint16_t BoardWidth = 10;
 constexpr uint16_t BoardHeight = 49;
 constexpr uint16_t VisibleHeight = 20;
 constexpr uint8_t DefaultQueueLength = 5;
-constexpr uint8_t DefaultSpawnColOffset = 19;
-constexpr uint8_t DefaultSpawnRowOffset = 3;
+constexpr uint8_t DefaultSpawnColOffset = 3;
+constexpr uint8_t DefaultSpawnRowOffset = 19;
 constexpr uint8_t PieceDimension = 4;
 
 enum class Cell : uint8_t { Empty, I, O, T, S, Z, J, L, Garbage, Unclearable };
