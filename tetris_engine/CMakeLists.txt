@@ -22,3 +22,16 @@ target_link_libraries(tetris_cli
     PRIVATE
         tetris_engine
 )
+
+enable_testing()
+
+add_executable(tetris_tests
+    tests/core_tests.cpp
+)
+
+target_link_libraries(tetris_tests
+    PRIVATE
+        tetris_engine
+)
+
+add_test(NAME tetris_tests COMMAND tetris_tests)
