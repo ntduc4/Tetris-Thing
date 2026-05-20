@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
@@ -125,10 +126,15 @@ uint16_t Board::aggregate_height() const <%
 %>
 
 void Board::addGarbage(uint16_t freeCol, uint16_t line_count) <%
+  uint16_t applied_lines =
+      std::min<uint16_t>(line_count, _height - max_height());
+  if (applied_lines < line_count)
+    _touch_max_height = true;
+
   for (int32_t row = _height - 1; row >= 0; row--) {
     for (uint16_t col = 0; col < _width; col++) {
-      if (row >= line_count) {
-        size_t i = c2i(row, col), j = c2i(row - line_count, col);
+      if (row >= applied_lines) {
+        size_t i = c2i(row, col), j = c2i(row - applied_lines, col);
         _cells[i] = _cells[j];
         if (row == _height - 1 && _cells[i] != Cell::Empty)
           _touch_max_height = true;

@@ -115,6 +115,45 @@ void test_add_garbage_inserts_rows_and_tracks_top_out() {
   require(board.get(0, 1) == Cell::Empty, "garbage keeps the free column open");
 }
 
+void test_add_garbage_caps_at_remaining_height() {
+  using namespace tetris;
+
+  auto setup_board = []() {
+    Board board(4, 24);
+    for (uint16_t row = 0; row < 20; ++row)
+      board.set(row, 0, Cell::T);
+    return board;
+  };
+
+  Board board_five = setup_board();
+  board_five.addGarbage(1, 5);
+
+  require(board_five.touch_max_height(),
+          "capped garbage marks the board as touching max height");
+  require(board_five.max_height() == 24,
+          "garbage only raises the stack to the board ceiling");
+  require(board_five.get(0, 0) == Cell::Garbage,
+          "first inserted garbage row fills blocked columns");
+  require(board_five.get(3, 0) == Cell::Garbage,
+          "fourth inserted garbage row is still added");
+  require(board_five.get(4, 0) == Cell::T,
+          "existing stack shifts upward by the capped amount");
+  require(board_five.get(0, 1) == Cell::Empty,
+          "garbage preserves the requested hole column");
+
+  Board board_twenty_four = setup_board();
+  board_twenty_four.addGarbage(1, 24);
+
+  require(board_twenty_four.touch_max_height(),
+          "oversized garbage requests still mark top-out state");
+  require(board_twenty_four.max_height() == 24,
+          "oversized garbage requests stop at the ceiling");
+  require(board_twenty_four.get(3, 0) == Cell::Garbage,
+          "oversized garbage still only inserts the remaining rows");
+  require(board_twenty_four.get(4, 0) == Cell::T,
+          "oversized garbage shifts the stack by the capped amount");
+}
+
 } // namespace
 
 int main() {
@@ -124,5 +163,6 @@ int main() {
   test_board_spawnable_checks_bounds_and_collisions();
   test_clear_lines_removes_full_rows();
   test_add_garbage_inserts_rows_and_tracks_top_out();
+  test_add_garbage_caps_at_remaining_height();
   return 0;
 }
