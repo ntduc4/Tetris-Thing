@@ -186,4 +186,15 @@ ActivePiece spawn_from_piece_type(PieceType type) {
                           .col = DefaultSpawnColOffset}};
 }
 
+std::vector<Offset> cells_of(const ActivePiece &piece) {
+  std::vector<Offset> cells;
+  cells.reserve(4);
+  for (Offset offset : piece.piece.current_shape()) {
+    cells.push_back(
+        Offset{.row = static_cast<int8_t>(piece.pos.row + offset.row),
+               .col = static_cast<int8_t>(piece.pos.col + offset.col)});
+  }
+  return cells;
+}
+
 } // namespace tetris

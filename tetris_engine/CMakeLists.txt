@@ -26,7 +26,9 @@ target_link_libraries(tetris_cli
 enable_testing()
 
 add_executable(tetris_tests
-    tests/core_tests.cpp
+    tests/main.cpp
+    tests/board_tests.cpp
+    tests/piece_tests.cpp
 )
 
 target_link_libraries(tetris_tests

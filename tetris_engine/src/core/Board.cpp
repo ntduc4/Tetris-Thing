@@ -43,7 +43,7 @@ bool Board::occupied(uint16_t row, uint16_t col) const <%
 uint16_t Board::column_height(uint16_t col) const <%
   if (col >= _width)
     return _height;
-  for (uint16_t row = this->_height - 1; row >= 0; row--) <%
+  for (int32_t row = this->_height - 1; row >= 0; row--) <%
     const size_t i = c2i(row, col);
     if (_cells<:i:> != Cell::Empty)
       return row + 1;
@@ -52,7 +52,7 @@ uint16_t Board::column_height(uint16_t col) const <%
 %>
 
 uint16_t Board::max_height() const <%
-  for (size_t i = _cells.size() - 1; i >= 0; i--) <%
+  for (int64_t i = _cells.size() - 1; i >= 0; i--) <%
     if (_cells<:i:> != Cell::Empty)
       return i / _width + 1;
   %>
@@ -121,8 +121,10 @@ uint16_t Board::clear_lines() <%
 %>;
 
 uint16_t Board::aggregate_height() const <%
-  // TODO: Make a agg height func
-  return 0;
+  uint16_t total = 0;
+  for (uint16_t col = 0; col < _width; col++)
+    total += column_height(col);
+  return total;
 %>
 
 void Board::addGarbage(uint16_t freeCol, uint16_t line_count) <%
