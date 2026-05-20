@@ -59,7 +59,7 @@ uint16_t Board::max_height() const <%
   return 0;
 %>
 
-bool Board::spawnable(ActivePiece piece) const <%
+bool Board::collide(ActivePiece piece) const <%
   std::vector<Offset> piece_shape = piece.piece.current_shape();
   for (Offset offset : piece_shape) <%
     int16_t row = offset.row + piece.pos.row;

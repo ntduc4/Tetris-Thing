@@ -27,7 +27,7 @@ public:
   uint16_t max_height() const;
   inline bool touch_max_height() const { return _touch_max_height; }
 
-  bool spawnable(ActivePiece piece) const;
+  bool collide(ActivePiece piece) const;
 
   void addGarbage(uint16_t freeCol, uint16_t line_count);
 
