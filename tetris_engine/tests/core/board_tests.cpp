@@ -1,4 +1,4 @@
-#include "test_support.hpp"
+#include "core/test_support.hpp"
 
 #include "core/Board.hpp"
 #include "core/Piece.hpp"
@@ -207,7 +207,7 @@ void test_add_garbage_caps_at_remaining_height() {
 
 } // namespace
 
-void run_board_tests() {
+int main() {
   test_board_constructors_and_dimensions();
   test_board_get_set_and_occupied();
   test_board_column_and_aggregate_height();
@@ -217,4 +217,5 @@ void run_board_tests() {
   test_clear_lines_resets_touch_max_height();
   test_add_garbage_inserts_rows_and_tracks_top_out();
   test_add_garbage_caps_at_remaining_height();
+  return 0;
 }

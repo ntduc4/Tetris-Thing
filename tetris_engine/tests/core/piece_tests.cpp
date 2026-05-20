@@ -1,6 +1,8 @@
-#include "test_support.hpp"
+#include "core/test_support.hpp"
 
 #include "core/Piece.hpp"
+
+#include <vector>
 
 namespace {
 
@@ -129,11 +131,12 @@ void test_cells_of_returns_absolute_cell_positions() {
 
 } // namespace
 
-void run_piece_tests() {
+int main() {
   test_piece_helper_construction();
   test_piece_spawn_defaults();
   test_piece_rotation_methods();
   test_piece_current_shape_and_render();
   test_piece_render_uses_piece_cell_type();
   test_cells_of_returns_absolute_cell_positions();
+  return 0;
 }

@@ -25,6 +25,3 @@ inline int count_cells(
         ++count;
   return count;
 }
-
-void run_board_tests();
-void run_piece_tests();
