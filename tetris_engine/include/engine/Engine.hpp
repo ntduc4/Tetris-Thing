@@ -16,11 +16,13 @@
 
 namespace tetris {
 
+// Represents an incoming garbage packet.
 struct GarbageEvent {
   uint16_t lines = 0;
   uint16_t hole_col = 0;
 };
 
+// Describes the outcome of a player-issued action.
 struct StepResult {
   bool moved = false;
   bool locked = false;
@@ -30,12 +32,14 @@ struct StepResult {
   uint16_t lines_cleared = 0;
 };
 
+// Describes the outcome of a gravity tick.
 struct TickResult {
   bool moved_down = false;
   bool locked = false;
   bool game_over = false;
 };
 
+// Describes the outcome of locking the active piece.
 struct LockResult {
   bool game_over = false;
   uint16_t lines_cleared = 0;
@@ -46,6 +50,7 @@ struct LockResult {
 
 class Engine {
 public:
+  // Creates a single-player engine with pluggable rules and services.
   Engine(Board board, std::unique_ptr<RotationSystem> rotation_system,
          std::unique_ptr<Randomizer> randomizer,
          std::unique_ptr<SpinSystem> spin_system = nullptr,
@@ -59,40 +64,67 @@ public:
         _attack_scheme{std::move(attack_scheme)},
         _preview_count{preview_count} {};
 
+  // Resets engine state and reseeds the piece source.
   void reset(uint64_t seed = 0);
 
+  // Returns the current board state.
   const Board &board() const { return _board; }
+  // Returns the currently active falling piece.
   const ActivePiece &active_piece() const { return _active_piece; }
+  // Returns the held piece if one exists.
   std::optional<PieceType> hold_piece() const { return _hold_piece; }
+  // Returns the visible preview queue.
   std::vector<PieceType> preview_queue() const;
 
+  // Returns whether the engine has reached game over.
   bool game_over() const { return _game_over; }
+  // Returns whether hold is currently available.
   bool can_hold() const { return _can_hold; }
+  // Returns the total cleared lines tracked by the engine.
   uint32_t lines_cleared() const { return _lines_cleared; }
+  // Returns the accumulated score.
   uint64_t score() const { return _score; }
+  // Returns the current combo counter.
   uint32_t combo() const { return _combo; }
+  // Returns whether back-to-back is currently active.
   bool back_to_back() const { return _back_to_back; }
 
+  // Spawns the next piece from the randomizer.
   bool spawn_next_piece();
+  // Swaps the active piece with the hold slot.
   bool hold();
 
+  // Attempts to move the active piece left.
   bool try_move_left();
+  // Attempts to move the active piece right.
   bool try_move_right();
+  // Attempts to move the active piece down.
   bool try_soft_drop(uint16_t amount = 1);
+  // Attempts to rotate the active piece clockwise.
   bool try_rotate_cw();
+  // Attempts to rotate the active piece counterclockwise.
   bool try_rotate_ccw();
+  // Attempts to rotate the active piece by 180 degrees.
   bool try_rotate_180();
 
+  // Returns the ghost placement for the active piece.
   ActivePiece ghost_piece() const;
+  // Returns how far the active piece can hard drop.
   uint16_t hard_drop_distance() const;
 
+  // Applies a high-level player action.
   StepResult step(Action action);
+  // Advances the game by one gravity tick.
   TickResult tick();
 
+  // Hard drops, locks, and resolves the active piece.
   LockResult hard_drop();
+  // Locks the current active piece and resolves resulting state.
   LockResult lock_active_piece();
 
+  // Adds incoming garbage with the requested hole column.
   void receive_garbage(uint16_t lines, uint16_t hole_col);
+  // Adds an incoming garbage packet.
   void receive_garbage(const GarbageEvent &garbage);
 
 private:
