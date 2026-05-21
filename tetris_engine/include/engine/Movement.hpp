@@ -3,7 +3,7 @@
 #include "core/Board.hpp"
 #include "core/Core.hpp"
 #include "core/Piece.hpp"
-#include "core/Rotation.hpp"
+#include "engine/Rotation.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -41,13 +41,12 @@ bool try_move_left(const Board &board, ActivePiece &piece);
 // Attempts to move the active piece right.
 bool try_move_right(const Board &board, ActivePiece &piece);
 // Attempts to move the active piece downward.
-bool try_soft_drop(const Board &board, ActivePiece &piece,
-                   uint16_t amount = 1);
+bool try_soft_drop(const Board &board, ActivePiece &piece, uint16_t amount = 1);
 
 // Attempts a clockwise rotation using the provided rotation system.
-std::optional<ActivePiece>
-try_rotate_cw(const Board &board, const ActivePiece &piece,
-              const RotationSystem &rotation_system);
+std::optional<ActivePiece> try_rotate_cw(const Board &board,
+                                         const ActivePiece &piece,
+                                         const RotationSystem &rotation_system);
 // Attempts a counterclockwise rotation using the provided rotation system.
 std::optional<ActivePiece>
 try_rotate_ccw(const Board &board, const ActivePiece &piece,

@@ -3,9 +3,9 @@
 #include "core/Board.hpp"
 #include "core/Core.hpp"
 #include "core/Piece.hpp"
-#include "core/Rotation.hpp"
 #include "engine/Attack.hpp"
 #include "engine/RNG.hpp"
+#include "engine/Rotation.hpp"
 #include "engine/Score.hpp"
 #include "engine/Spin.hpp"
 

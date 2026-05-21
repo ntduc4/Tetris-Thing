@@ -2,9 +2,9 @@
 
 #include "core/Board.hpp"
 #include "core/Piece.hpp"
-#include "core/Rotation.hpp"
 #include "engine/Attack.hpp"
 #include "engine/RNG.hpp"
+#include "engine/Rotation.hpp"
 #include "engine/Score.hpp"
 #include "engine/Spin.hpp"
 
@@ -15,9 +15,10 @@
 
 class FakeRotationSystem : public tetris::RotationSystem {
 public:
-  std::optional<tetris::Offset>
-  kick_offset(tetris::PieceType, tetris::Rotation from, tetris::Rotation to,
-              uint8_t check_num) const override {
+  std::optional<tetris::Offset> kick_offset(tetris::PieceType,
+                                            tetris::Rotation from,
+                                            tetris::Rotation to,
+                                            uint8_t check_num) const override {
     if (from == tetris::Rotation::North && to == tetris::Rotation::East &&
         check_num == 0)
       return tetris::Offset{.row = 0, .col = 1};
@@ -25,21 +26,24 @@ public:
   }
 
   std::optional<tetris::ActivePiece>
-  try_rotate_cw(const tetris::Board &, const tetris::ActivePiece &piece) const override {
+  try_rotate_cw(const tetris::Board &,
+                const tetris::ActivePiece &piece) const override {
     tetris::ActivePiece rotated{.piece = piece.piece, .pos = piece.pos};
     rotated.piece.rotate_cw();
     return rotated;
   }
 
   std::optional<tetris::ActivePiece>
-  try_rotate_ccw(const tetris::Board &, const tetris::ActivePiece &piece) const override {
+  try_rotate_ccw(const tetris::Board &,
+                 const tetris::ActivePiece &piece) const override {
     tetris::ActivePiece rotated{.piece = piece.piece, .pos = piece.pos};
     rotated.piece.rotate_ccw();
     return rotated;
   }
 
   std::optional<tetris::ActivePiece>
-  try_rotate_180(const tetris::Board &, const tetris::ActivePiece &piece) const override {
+  try_rotate_180(const tetris::Board &,
+                 const tetris::ActivePiece &piece) const override {
     tetris::ActivePiece rotated{.piece = piece.piece, .pos = piece.pos};
     rotated.piece.rotate_180();
     return rotated;
@@ -72,18 +76,16 @@ public:
 
   uint64_t seed_value = 0;
   size_t index = 0;
-  std::vector<tetris::PieceType> queue = {tetris::PieceType::I,
-                                          tetris::PieceType::O,
-                                          tetris::PieceType::T,
-                                          tetris::PieceType::S,
-                                          tetris::PieceType::Z,
-                                          tetris::PieceType::J,
-                                          tetris::PieceType::L};
+  std::vector<tetris::PieceType> queue = {
+      tetris::PieceType::I, tetris::PieceType::O, tetris::PieceType::T,
+      tetris::PieceType::S, tetris::PieceType::Z, tetris::PieceType::J,
+      tetris::PieceType::L};
 };
 
 class FakeSpinSystem : public tetris::SpinSystem {
 public:
-  tetris::SpinType detect(const tetris::Board &, const tetris::ActivePiece &piece,
+  tetris::SpinType detect(const tetris::Board &,
+                          const tetris::ActivePiece &piece,
                           bool last_action_was_rotation) const override {
     if (!last_action_was_rotation)
       return tetris::SpinType::None;

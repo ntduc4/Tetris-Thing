@@ -104,7 +104,7 @@ int main(int argc, char *argv[]) {
   cout << "Max height: " << board.max_height() << endl;
   cout << "Maxed height: " << (board.touch_max_height() ? "True" : "False")
        << endl;
-  cout << "Spawnable: " << (board.spawnable(p) ? "True" : "False") << endl;
+  cout << "Spawnable: " << (board.collide(p) ? "True" : "False") << endl;
   printBoardFull(board, p);
   int lineCleared = board.clear_lines();
   cout << "Cleared " << lineCleared << " lines" << endl;
@@ -112,13 +112,13 @@ int main(int argc, char *argv[]) {
   cout << "Max height: " << board.max_height() << endl;
   cout << "Maxed height: " << (board.touch_max_height() ? "True" : "False")
        << endl;
-  cout << "Spawnable: " << (board.spawnable(p) ? "True" : "False") << endl;
+  cout << "Spawnable: " << (board.collide(p) ? "True" : "False") << endl;
   printBoardFull(board, p);
   board.addGarbage(2, 6);
   cout << endl << "Max height: " << board.max_height() << endl;
   cout << "Maxed height: " << (board.touch_max_height() ? "True" : "False")
        << endl;
-  cout << "Spawnable: " << (board.spawnable(p) ? "True" : "False") << endl;
+  cout << "Spawnable: " << (board.collide(p) ? "True" : "False") << endl;
   printBoardFull(board, p);
 
   return 0;
