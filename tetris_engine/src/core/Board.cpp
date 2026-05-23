@@ -25,8 +25,8 @@ Board::Board(uint16_t width, uint16_t height)
   this->_touch_max_height = false;
 %>
 
-uint16_t Board::getWidth() const { return _width; }
-uint16_t Board::getHeight() const { return _height; }
+uint16_t Board::get_width() const { return _width; }
+uint16_t Board::get_height() const { return _height; }
 
 Cell Board::get(uint16_t row, uint16_t col) const <%
   auto i = cc2i(row, col);
@@ -69,15 +69,15 @@ bool Board::collide(ActivePiece piece) const <%
   for (Offset offset : piece_shape) <%
     int16_t row = offset.row + piece.pos.row;
     if (row < 0 || row >= _height)
-      return false;
+      return true;
     int16_t col = offset.col + piece.pos.col;
     if (col < 0 || col >= _width)
-      return false;
+      return true;
     const size_t i = row * _width + col;
     if (_cells<:i:> != Cell::Empty)
-      return false;
+      return true;
   %>
-  return true;
+  return false;
 %>
 
 std::vector<std::vector<Cell>> Board::render() const <%
@@ -132,7 +132,7 @@ uint16_t Board::aggregate_height() const <%
   return total;
 %>
 
-void Board::addGarbage(uint16_t freeCol, uint16_t line_count) <%
+void Board::add_garbage(uint16_t freeCol, uint16_t line_count) <%
   uint16_t applied_lines =
       std::min<uint16_t>(line_count, _height - max_height());
   if (applied_lines < line_count)

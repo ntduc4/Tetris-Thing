@@ -12,8 +12,8 @@ public:
   Board();
   Board(uint16_t width, uint16_t height);
 
-  uint16_t getWidth() const;
-  uint16_t getHeight() const;
+  uint16_t get_width() const;
+  uint16_t get_height() const;
 
   Cell get(uint16_t row, uint16_t col) const;
   void set(uint16_t row, uint16_t col, Cell cell);
@@ -29,7 +29,7 @@ public:
 
   bool collide(ActivePiece piece) const;
 
-  void addGarbage(uint16_t freeCol, uint16_t line_count);
+  void add_garbage(uint16_t freeCol, uint16_t line_count);
 
   std::vector<std::vector<Cell>> render() const;
 

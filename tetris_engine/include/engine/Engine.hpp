@@ -56,13 +56,16 @@ public:
          std::unique_ptr<SpinSystem> spin_system = nullptr,
          std::unique_ptr<ScoreSystem> score_system = nullptr,
          std::unique_ptr<AttackScheme> attack_scheme = nullptr,
-         uint8_t preview_count = DefaultQueueLength)
+         uint8_t preview_count = DefaultQueueLength,
+         uint16_t spawn_col_offset = DefaultSpawnColOffset,
+         uint16_t spawn_row_offset = DefaultSpawnRowOffset)
       : _board{board}, _rotation_system{std::move(rotation_system)},
         _randomizer{std::move(randomizer)},
         _spin_system{std::move(spin_system)},
         _score_system{std::move(score_system)},
-        _attack_scheme{std::move(attack_scheme)},
-        _preview_count{preview_count} {};
+        _attack_scheme{std::move(attack_scheme)}, _preview_count{preview_count},
+        _spawn_col_offset{spawn_col_offset},
+        _spawn_row_offset{spawn_row_offset} {};
 
   // Resets engine state and reseeds the piece source.
   void reset(uint64_t seed = 0);
@@ -70,7 +73,9 @@ public:
   // Returns the current board state.
   const Board &board() const { return _board; }
   // Returns the currently active falling piece.
-  const ActivePiece &active_piece() const { return _active_piece; }
+  const std::optional<ActivePiece> &active_piece() const {
+    return _active_piece;
+  }
   // Returns the held piece if one exists.
   std::optional<PieceType> hold_piece() const { return _hold_piece; }
   // Returns the visible preview queue.
@@ -92,9 +97,9 @@ public:
   bool back_to_back() const { return _back_to_back; }
 
   // Spawns the next piece from the randomizer.
-  bool spawn_next_piece();
+  bool spawn_next_piece(bool clutch_clear = false);
   // Swaps the active piece with the hold slot.
-  bool hold();
+  bool hold(bool ignore_hold = false);
 
   // Attempts to move the active piece left.
   bool try_move_left();
@@ -110,7 +115,7 @@ public:
   bool try_rotate_180();
 
   // Returns the ghost placement for the active piece.
-  ActivePiece ghost_piece() const;
+  std::optional<ActivePiece> ghost_piece() const;
   // Returns how far the active piece can hard drop.
   uint16_t hard_drop_distance() const;
 
@@ -131,7 +136,7 @@ public:
 
 private:
   Board _board;
-  ActivePiece _active_piece = spawn_from_piece_type(PieceType::I);
+  std::optional<ActivePiece> _active_piece;
   std::optional<PieceType> _hold_piece;
   bool _game_over = false;
   bool _can_hold = true;
@@ -139,6 +144,8 @@ private:
   uint64_t _score = 0;
   uint32_t _combo = 0;
   bool _back_to_back = false;
+  uint16_t _spawn_col_offset = 0;
+  uint16_t _spawn_row_offset = 0;
 
   std::unique_ptr<RotationSystem> _rotation_system;
   std::unique_ptr<Randomizer> _randomizer;

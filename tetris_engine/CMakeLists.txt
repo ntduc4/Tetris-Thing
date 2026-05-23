@@ -106,3 +106,19 @@ target_include_directories(tetris_engine_movement_spec_tests
 )
 
 add_test(NAME tetris_engine_movement_spec_tests COMMAND tetris_engine_movement_spec_tests)
+
+add_executable(tetris_engine_spawn_spec_tests
+    tests/engine/spawn_spec_tests.cpp
+)
+
+target_link_libraries(tetris_engine_spawn_spec_tests
+    PRIVATE
+        tetris_engine
+)
+
+target_include_directories(tetris_engine_spawn_spec_tests
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+)
+
+add_test(NAME tetris_engine_spawn_spec_tests COMMAND tetris_engine_spawn_spec_tests)

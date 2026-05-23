@@ -32,8 +32,8 @@ char cell_to_char(Cell cell) {
 }
 
 void printBoard(const Board &board) {
-  for (int i = board.getHeight() - 1; i >= 0; i--) {
-    for (int j = 0; j < board.getWidth(); j++)
+  for (int i = board.get_height() - 1; i >= 0; i--) {
+    for (int j = 0; j < board.get_width(); j++)
       cout << (board.get(i, j) == Cell::Empty ? "." : "#");
     cout << endl;
   }
@@ -42,13 +42,13 @@ void printBoard(const Board &board) {
 void printBoardFull(const Board &board, const ActivePiece &piece) {
   unordered_set<int> offsets;
   for (Offset offset : piece.piece.current_shape())
-    offsets.insert((piece.pos.row + offset.row) * board.getWidth() +
+    offsets.insert((piece.pos.row + offset.row) * board.get_width() +
                    piece.pos.col + offset.col);
 
-  for (int i = board.getHeight() - 1; i >= 0; i--) {
-    for (int j = 0; j < board.getWidth(); j++) {
+  for (int i = board.get_height() - 1; i >= 0; i--) {
+    for (int j = 0; j < board.get_width(); j++) {
       char boardCell = cell_to_char(board.get(i, j));
-      int id = i * board.getWidth() + j;
+      int id = i * board.get_width() + j;
       if (offsets.find(id) != offsets.end())
         boardCell = cell_to_char(piece.piece.cell_type());
       cout << boardCell;
@@ -86,11 +86,11 @@ int main(int argc, char *argv[]) {
   board.set(18, 4, Cell::Garbage);
   board.set(18, 5, Cell::Garbage);
   for (int j = 0; j < 8; j++)
-    for (int i = 0; i < board.getWidth(); i++)
+    for (int i = 0; i < board.get_width(); i++)
       board.set(j, i, Cell::Garbage);
 
   board.set(6, 6, Cell::Empty);
-  board.addGarbage(1, 1);
+  board.add_garbage(1, 1);
 
   // ActivePiece p{.piece = get_from_piece_type(PieceType::I),
   //               .pos = Position{.row = DefaultSpawnRowOffset,
@@ -114,7 +114,7 @@ int main(int argc, char *argv[]) {
        << endl;
   cout << "Spawnable: " << (board.collide(p) ? "True" : "False") << endl;
   printBoardFull(board, p);
-  board.addGarbage(2, 6);
+  board.add_garbage(2, 6);
   cout << endl << "Max height: " << board.max_height() << endl;
   cout << "Maxed height: " << (board.touch_max_height() ? "True" : "False")
        << endl;

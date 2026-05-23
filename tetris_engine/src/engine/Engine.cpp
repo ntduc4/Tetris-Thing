@@ -1,4 +1,7 @@
 #include "engine/Engine.hpp"
+#include "core/Core.hpp"
+#include "core/Piece.hpp"
+#include <optional>
 
 namespace tetris {
 
@@ -9,16 +12,35 @@ void Engine::reset(uint64_t seed) {
 }
 
 std::vector<PieceType> Engine::preview_queue() const {
-  // TODO: Return the engine preview queue.
-  return {};
+  return _randomizer->preview(_preview_count);
 }
 
-bool Engine::spawn_next_piece() {
-  // TODO: Spawn the next piece.
-  return false;
+bool Engine::spawn_next_piece(bool clutch_clear) {
+  ActivePiece nextPiece = spawn_from_piece_type(
+      _randomizer->peek(), _spawn_row_offset, _spawn_col_offset);
+
+  if (_board.collide(nextPiece)) {
+    if (!clutch_clear)
+      return false;
+
+    while (nextPiece.pos.col < _board.get_height() - PieceDimension) {
+      nextPiece.pos.col++;
+      if (!_board.collide(nextPiece)) {
+        _randomizer->pop();
+        _active_piece.emplace(nextPiece);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  _randomizer->pop();
+  _active_piece.emplace(nextPiece);
+  return true;
 }
 
-bool Engine::hold() {
+bool Engine::hold(bool ignore_hold) {
   // TODO: Implement hold behavior.
   return false;
 }
@@ -53,7 +75,7 @@ bool Engine::try_rotate_180() {
   return false;
 }
 
-ActivePiece Engine::ghost_piece() const {
+std::optional<ActivePiece> Engine::ghost_piece() const {
   // TODO: Return the ghost piece position.
   return _active_piece;
 }

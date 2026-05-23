@@ -186,6 +186,12 @@ ActivePiece spawn_from_piece_type(PieceType type) {
                           .col = DefaultSpawnColOffset}};
 }
 
+ActivePiece spawn_from_piece_type(PieceType type, uint16_t row_offset,
+                                  uint16_t col_offset) {
+  return {.piece = get_from_piece_type(type),
+          .pos = Position{.row = row_offset, .col = col_offset}};
+}
+
 std::vector<Offset> cells_of(const ActivePiece &piece) {
   std::vector<Offset> cells;
   cells.reserve(4);

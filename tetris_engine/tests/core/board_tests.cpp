@@ -9,14 +9,14 @@ void test_board_constructors_and_dimensions() {
   using namespace tetris;
 
   Board default_board;
-  require(default_board.getWidth() == BoardWidth,
+  require(default_board.get_width() == BoardWidth,
           "default board uses standard width");
-  require(default_board.getHeight() == BoardHeight,
+  require(default_board.get_height() == BoardHeight,
           "default board uses standard height");
 
   Board custom_board(4, 6);
-  require(custom_board.getWidth() == 4, "custom board width is stored");
-  require(custom_board.getHeight() == 6, "custom board height is stored");
+  require(custom_board.get_width() == 4, "custom board width is stored");
+  require(custom_board.get_height() == 6, "custom board height is stored");
 }
 
 void test_board_get_set_and_occupied() {
@@ -82,23 +82,23 @@ void test_board_spawnable_checks_bounds_and_collisions() {
   Board board(10, 24);
   ActivePiece piece = spawn_from_piece_type(PieceType::O);
 
-  require(board.collide(piece), "default spawn is valid on empty board");
+  require(!board.collide(piece), "default spawn is valid on empty board");
 
   board.set(piece.pos.row + 1, piece.pos.col + 1, Cell::Garbage);
-  require(!board.collide(piece), "occupied spawn cell blocks piece");
+  require(board.collide(piece), "occupied spawn cell blocks piece");
 
   ActivePiece left_piece = spawn_from_piece_type(PieceType::O);
   left_piece.pos.col = -2;
-  require(!board.collide(left_piece), "piece outside left boundary is invalid");
+  require(board.collide(left_piece), "piece outside left boundary is invalid");
 
   ActivePiece right_piece = spawn_from_piece_type(PieceType::O);
   right_piece.pos.col = 8;
-  require(!board.collide(right_piece),
+  require(board.collide(right_piece),
           "piece outside right boundary is invalid");
 
   ActivePiece top_piece = spawn_from_piece_type(PieceType::O);
   top_piece.pos.row = 23;
-  require(!board.collide(top_piece), "piece outside top boundary is invalid");
+  require(board.collide(top_piece), "piece outside top boundary is invalid");
 }
 
 void test_clear_lines_handles_none_single_multiple_and_unclearable() {
@@ -111,14 +111,14 @@ void test_clear_lines_handles_none_single_multiple_and_unclearable() {
           "board stays unchanged when no lines clear");
 
   Board single(4, 4);
-  for (uint16_t col = 0; col < single.getWidth(); ++col)
+  for (uint16_t col = 0; col < single.get_width(); ++col)
     single.set(0, col, Cell::Garbage);
   single.set(1, 1, Cell::L);
   require(single.clear_lines() == 1, "single full line clears");
   require(single.get(0, 1) == Cell::L, "cells above fall into cleared row");
 
   Board multiple(4, 4);
-  for (uint16_t col = 0; col < multiple.getWidth(); ++col) {
+  for (uint16_t col = 0; col < multiple.get_width(); ++col) {
     multiple.set(0, col, Cell::Garbage);
     multiple.set(1, col, Cell::Garbage);
   }
@@ -130,7 +130,7 @@ void test_clear_lines_handles_none_single_multiple_and_unclearable() {
           "cells above cleared rows shift down");
 
   Board unclearable(4, 4);
-  for (uint16_t col = 0; col < unclearable.getWidth(); ++col)
+  for (uint16_t col = 0; col < unclearable.get_width(); ++col)
     unclearable.set(0, col, Cell::Unclearable);
   require(unclearable.clear_lines() == 0,
           "unclearable cells prevent a row from clearing");
@@ -143,10 +143,10 @@ void test_clear_lines_resets_touch_max_height() {
 
   Board board(4, 4);
   board.set(2, 0, Cell::J);
-  board.addGarbage(1, 1);
+  board.add_garbage(1, 1);
   require(board.touch_max_height(), "garbage push can set touch max height");
 
-  for (uint16_t col = 0; col < board.getWidth(); ++col)
+  for (uint16_t col = 0; col < board.get_width(); ++col)
     board.set(0, col, Cell::Garbage);
   require(board.clear_lines() == 1,
           "line clear still succeeds after top-out flag");
@@ -159,7 +159,7 @@ void test_add_garbage_inserts_rows_and_tracks_top_out() {
 
   Board board(4, 4);
   board.set(2, 0, Cell::J);
-  board.addGarbage(1, 1);
+  board.add_garbage(1, 1);
 
   require(board.touch_max_height(), "pushing into top row marks top-out state");
   require(board.get(0, 0) == Cell::Garbage, "garbage fills blocked columns");
@@ -177,7 +177,7 @@ void test_add_garbage_caps_at_remaining_height() {
   };
 
   Board board_five = setup_board();
-  board_five.addGarbage(1, 5);
+  board_five.add_garbage(1, 5);
 
   require(board_five.touch_max_height(),
           "capped garbage marks the board as touching max height");
@@ -193,7 +193,7 @@ void test_add_garbage_caps_at_remaining_height() {
           "garbage preserves the requested hole column");
 
   Board board_twenty_four = setup_board();
-  board_twenty_four.addGarbage(1, 24);
+  board_twenty_four.add_garbage(1, 24);
 
   require(board_twenty_four.touch_max_height(),
           "oversized garbage requests still mark top-out state");
