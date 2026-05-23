@@ -4,6 +4,8 @@ namespace tetris {
 
 void Engine::reset(uint64_t seed) {
   // TODO: Implement full engine reset.
+  _randomizer->seed(seed);
+  _board.reset();
 }
 
 std::vector<PieceType> Engine::preview_queue() const {

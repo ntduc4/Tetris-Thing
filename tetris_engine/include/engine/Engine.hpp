@@ -75,6 +75,8 @@ public:
   std::optional<PieceType> hold_piece() const { return _hold_piece; }
   // Returns the visible preview queue.
   std::vector<PieceType> preview_queue() const;
+  // Render the board
+  std::vector<std::vector<Cell>> render() const;
 
   // Returns whether the engine has reached game over.
   bool game_over() const { return _game_over; }

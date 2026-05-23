@@ -33,6 +33,8 @@ public:
 
   std::vector<std::vector<Cell>> render() const;
 
+  void reset();
+
 private:
   const uint16_t _width, _height;
   std::vector<Cell> _cells;

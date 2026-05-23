@@ -14,6 +14,11 @@ Board::Board() : _width<%BoardWidth%>, _height(BoardHeight) <%
   this->_touch_max_height = false;
 %>
 
+void Board::reset() {
+  this->_cells = std::vector(this->_width * this->_height, Cell::Empty);
+  this->_touch_max_height = false;
+}
+
 Board::Board(uint16_t width, uint16_t height)
     : _width<%width%>, _height(height) <%
   this->_cells = std::vector(this->_width * this->_height, Cell::Empty);
