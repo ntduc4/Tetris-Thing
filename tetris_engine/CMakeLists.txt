@@ -25,100 +25,46 @@ target_link_libraries(tetris_cli
         tetris_engine
 )
 
+
+# Tests cases
 enable_testing()
 
-add_executable(tetris_core_board_tests
-    tests/core/board_tests.cpp
-)
-
-target_link_libraries(tetris_core_board_tests
-    PRIVATE
-        tetris_engine
-)
-
-target_include_directories(tetris_core_board_tests
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests
-)
-
+add_executable(tetris_core_board_tests tests/core/board_tests.cpp)
+target_link_libraries(tetris_core_board_tests PRIVATE tetris_engine)
+target_include_directories(tetris_core_board_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_test(NAME tetris_core_board_tests COMMAND tetris_core_board_tests)
 
-add_executable(tetris_core_piece_tests
-    tests/core/piece_tests.cpp
-)
 
-target_link_libraries(tetris_core_piece_tests
-    PRIVATE
-        tetris_engine
-)
-
-target_include_directories(tetris_core_piece_tests
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests
-)
-
+add_executable(tetris_core_piece_tests tests/core/piece_tests.cpp)
+target_link_libraries(tetris_core_piece_tests PRIVATE tetris_engine)
+target_include_directories(tetris_core_piece_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_test(NAME tetris_core_piece_tests COMMAND tetris_core_piece_tests)
 
-add_executable(tetris_engine_rules_spec_tests
-    tests/engine/rules_spec_tests.cpp
-)
 
-target_link_libraries(tetris_engine_rules_spec_tests
-    PRIVATE
-        tetris_engine
-)
-
-target_include_directories(tetris_engine_rules_spec_tests
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests
-)
-
+add_executable(tetris_engine_rules_spec_tests tests/engine/rules_spec_tests.cpp)
+target_link_libraries(tetris_engine_rules_spec_tests PRIVATE tetris_engine)
+target_include_directories(tetris_engine_rules_spec_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_test(NAME tetris_engine_rules_spec_tests COMMAND tetris_engine_rules_spec_tests)
 
-add_executable(tetris_engine_runtime_spec_tests
-    tests/engine/engine_runtime_spec_tests.cpp
-)
 
-target_link_libraries(tetris_engine_runtime_spec_tests
-    PRIVATE
-        tetris_engine
-)
-
-target_include_directories(tetris_engine_runtime_spec_tests
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests
-)
-
+add_executable(tetris_engine_runtime_spec_tests tests/engine/engine_runtime_spec_tests.cpp)
+target_link_libraries(tetris_engine_runtime_spec_tests PRIVATE tetris_engine)
+target_include_directories(tetris_engine_runtime_spec_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_test(NAME tetris_engine_runtime_spec_tests COMMAND tetris_engine_runtime_spec_tests)
 
-add_executable(tetris_engine_movement_spec_tests
-    tests/engine/movement_spec_tests.cpp
-)
 
-target_link_libraries(tetris_engine_movement_spec_tests
-    PRIVATE
-        tetris_engine
-)
-
-target_include_directories(tetris_engine_movement_spec_tests
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests
-)
-
+add_executable(tetris_engine_movement_spec_tests tests/engine/movement_spec_tests.cpp)
+target_link_libraries(tetris_engine_movement_spec_tests PRIVATE tetris_engine)
+target_include_directories(tetris_engine_movement_spec_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_test(NAME tetris_engine_movement_spec_tests COMMAND tetris_engine_movement_spec_tests)
 
-add_executable(tetris_engine_spawn_spec_tests
-    tests/engine/spawn_spec_tests.cpp
-)
 
-target_link_libraries(tetris_engine_spawn_spec_tests
-    PRIVATE
-        tetris_engine
-)
-
-target_include_directories(tetris_engine_spawn_spec_tests
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests
-)
-
+add_executable(tetris_engine_spawn_spec_tests tests/engine/spawn_spec_tests.cpp) 
+target_link_libraries(tetris_engine_spawn_spec_tests PRIVATE tetris_engine)
+target_include_directories(tetris_engine_spawn_spec_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_test(NAME tetris_engine_spawn_spec_tests COMMAND tetris_engine_spawn_spec_tests)
+
+add_executable(tetris_engine_hold_spec_tests tests/engine/hold_spec_tests.cpp)
+target_link_libraries(tetris_engine_hold_spec_tests PRIVATE tetris_engine)
+target_include_directories(tetris_engine_hold_spec_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+add_test(NAME tetris_engine_hold_spec_tests COMMAND tetris_engine_hold_spec_tests)

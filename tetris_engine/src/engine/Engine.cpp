@@ -9,6 +9,8 @@ void Engine::reset(uint64_t seed) {
   // TODO: Implement full engine reset.
   _randomizer->seed(seed);
   _board.reset();
+  _can_hold = true;
+  _game_over = false;
 }
 
 std::vector<PieceType> Engine::preview_queue() const {
@@ -28,6 +30,7 @@ bool Engine::spawn_next_piece(bool clutch_clear) {
       if (!_board.collide(nextPiece)) {
         _randomizer->pop();
         _active_piece.emplace(nextPiece);
+        _can_hold = true;
         return true;
       }
     }
@@ -37,12 +40,35 @@ bool Engine::spawn_next_piece(bool clutch_clear) {
 
   _randomizer->pop();
   _active_piece.emplace(nextPiece);
+  _can_hold = true;
   return true;
 }
 
 bool Engine::hold(bool ignore_hold) {
-  // TODO: Implement hold behavior.
-  return false;
+  if (!ignore_hold && !_can_hold)
+    return false;
+
+  if (!_hold_piece.has_value()) {
+    if (!_active_piece.has_value())
+      return false;
+    PieceType temp = _active_piece->piece.type();
+    if (spawn_next_piece()) {
+      _hold_piece = temp;
+      _can_hold = false;
+      return true;
+    } else
+      return false;
+  }
+
+  ActivePiece nextPiece = spawn_from_piece_type(
+      _hold_piece.value(), _spawn_row_offset, _spawn_col_offset);
+  if (_board.collide(nextPiece))
+    return false;
+
+  _hold_piece = _active_piece.value().piece.type();
+  _active_piece.emplace(nextPiece);
+  _can_hold = false;
+  return true;
 }
 
 bool Engine::try_move_left() {

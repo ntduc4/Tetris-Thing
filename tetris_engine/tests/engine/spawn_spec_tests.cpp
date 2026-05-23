@@ -1,6 +1,8 @@
 #include "engine/test_support.hpp"
 
+#define private public
 #include "engine/Engine.hpp"
+#undef private
 
 #include <memory>
 
@@ -26,6 +28,7 @@ void test_spawn_next_piece_returns_false_without_clutch_clear_when_spawn_is_bloc
   Engine engine(board, make_rotation_system(), std::move(randomizer));
 
   const PieceType expected_piece = randomizer_ptr->peek();
+  engine._can_hold = false;
 
   require(!engine.spawn_next_piece(false),
           "spawn should fail when the spawn area is blocked and clutch clear is off");
@@ -35,6 +38,8 @@ void test_spawn_next_piece_returns_false_without_clutch_clear_when_spawn_is_bloc
           "failed spawn should not pop from the randomizer");
   require(!engine.active_piece().has_value(),
           "failed spawn should leave the active piece unset");
+  require(!engine.can_hold(),
+          "failed spawn should preserve the current can_hold state");
 }
 
 void test_spawn_next_piece_spawns_and_pops_once_when_spawn_is_open() {
@@ -46,6 +51,7 @@ void test_spawn_next_piece_spawns_and_pops_once_when_spawn_is_open() {
 
   const PieceType expected_piece = randomizer_ptr->peek();
   const PieceType next_piece = randomizer_ptr->preview(2)[1];
+  engine._can_hold = false;
 
   require(engine.spawn_next_piece(false),
           "spawn should succeed when the spawn area is open");
@@ -57,6 +63,7 @@ void test_spawn_next_piece_spawns_and_pops_once_when_spawn_is_open() {
           "successful spawn should set the active piece");
   require(engine.active_piece()->piece.type() == expected_piece,
           "successful spawn should activate the queued piece");
+  require(engine.can_hold(), "successful spawn should reset can_hold");
 }
 
 void test_spawn_next_piece_clutch_clear_spawns_and_pops_once_when_shifted_spawn_fits() {
@@ -70,6 +77,7 @@ void test_spawn_next_piece_clutch_clear_spawns_and_pops_once_when_shifted_spawn_
 
   const PieceType expected_piece = randomizer_ptr->peek();
   const PieceType next_piece = randomizer_ptr->preview(2)[1];
+  engine._can_hold = false;
 
   require(engine.spawn_next_piece(true),
           "clutch clear should spawn when the piece can be shifted into a valid spawn position");
@@ -81,6 +89,7 @@ void test_spawn_next_piece_clutch_clear_spawns_and_pops_once_when_shifted_spawn_
           "clutch-clear spawn should set the active piece");
   require(engine.active_piece()->piece.type() == expected_piece,
           "clutch-clear spawn should activate the queued piece");
+  require(engine.can_hold(), "clutch-clear spawn should reset can_hold");
 }
 
 void test_spawn_next_piece_returns_false_when_clutch_clear_would_require_above_board_spawn() {
@@ -92,6 +101,7 @@ void test_spawn_next_piece_returns_false_when_clutch_clear_would_require_above_b
                 nullptr, nullptr, DefaultQueueLength, DefaultSpawnColOffset, 24);
 
   const PieceType expected_piece = randomizer_ptr->peek();
+  engine._can_hold = false;
 
   require(!engine.spawn_next_piece(true),
           "clutch clear should fail when spawning would require placing the piece above the board");
@@ -101,6 +111,8 @@ void test_spawn_next_piece_returns_false_when_clutch_clear_would_require_above_b
           "failed clutch-clear spawn should not pop from the randomizer");
   require(!engine.active_piece().has_value(),
           "failed clutch-clear spawn should leave the active piece unset");
+  require(!engine.can_hold(),
+          "failed clutch-clear spawn should preserve the current can_hold state");
 }
 
 } // namespace
