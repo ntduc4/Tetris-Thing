@@ -71,17 +71,17 @@ bool Engine::hold(bool ignore_hold) {
   return true;
 }
 
-bool Engine::try_move_left() {
+bool Engine::try_move_left(int16_t) {
   // TODO: Implement left movement.
   return false;
 }
 
-bool Engine::try_move_right() {
+bool Engine::try_move_right(int16_t) {
   // TODO: Implement right movement.
   return false;
 }
 
-bool Engine::try_soft_drop(uint16_t) {
+bool Engine::try_soft_drop(int16_t) {
   // TODO: Implement soft drop.
   return false;
 }

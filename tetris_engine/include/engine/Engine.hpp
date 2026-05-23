@@ -110,11 +110,11 @@ public:
   bool hold(bool ignore_hold = false);
 
   // Attempts to move the active piece left.
-  bool try_move_left();
+  bool try_move_left(int16_t amount = 1);
   // Attempts to move the active piece right.
-  bool try_move_right();
+  bool try_move_right(int16_t amount = 1);
   // Attempts to move the active piece down.
-  bool try_soft_drop(uint16_t amount = 1);
+  bool try_soft_drop(int16_t amount = 1);
   // Attempts to rotate the active piece clockwise.
   bool try_rotate_cw();
   // Attempts to rotate the active piece counterclockwise.
