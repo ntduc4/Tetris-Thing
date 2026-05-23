@@ -102,8 +102,14 @@ bool Engine::try_rotate_180() {
 }
 
 std::optional<ActivePiece> Engine::ghost_piece() const {
-  // TODO: Return the ghost piece position.
-  return _active_piece;
+  std::optional<ActivePiece> res = _active_piece;
+  if (res.has_value()) {
+    while (res->pos.row > -PieceDimension && !_board.collide(res.value()))
+      res->pos.row--;
+    res->pos.row++;
+  }
+
+  return res;
 }
 
 uint16_t Engine::hard_drop_distance() const {

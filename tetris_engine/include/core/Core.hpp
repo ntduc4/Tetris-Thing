@@ -5,8 +5,8 @@ namespace tetris {
 constexpr uint16_t BoardWidth = 10;
 constexpr uint16_t BoardHeight = 49;
 constexpr uint16_t VisibleHeight = 20;
-constexpr uint16_t DefaultSpawnColOffset = 3;
-constexpr uint16_t DefaultSpawnRowOffset = 19;
+constexpr int16_t DefaultSpawnColOffset = 3;
+constexpr int16_t DefaultSpawnRowOffset = 19;
 constexpr uint8_t DefaultQueueLength = 5;
 constexpr uint8_t PieceDimension = 4;
 
@@ -16,9 +16,11 @@ enum class Rotation : uint8_t { North, East, South, West, Count };
 
 constexpr Rotation DefaultRotation = Rotation::North;
 
+// Keep signed, root pos can be negative as long as the actual cell is inside
+// board
 struct Position {
-  uint16_t row;
-  uint16_t col;
+  int16_t row;
+  int16_t col;
 };
 
 struct Offset {

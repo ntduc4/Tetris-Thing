@@ -52,6 +52,6 @@ std::vector<Offset> cells_of(const ActivePiece &piece);
 // ========== Helpers ==========
 Piece get_from_piece_type(PieceType type);
 ActivePiece spawn_from_piece_type(PieceType type);
-ActivePiece spawn_from_piece_type(PieceType type, uint16_t row_offset,
-                                  uint16_t col_offset);
+ActivePiece spawn_from_piece_type(PieceType type, int16_t row_offset,
+                                  int16_t col_offset);
 } // namespace tetris

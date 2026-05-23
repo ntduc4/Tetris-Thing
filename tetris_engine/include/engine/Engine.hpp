@@ -57,8 +57,8 @@ public:
          std::unique_ptr<ScoreSystem> score_system = nullptr,
          std::unique_ptr<AttackScheme> attack_scheme = nullptr,
          uint8_t preview_count = DefaultQueueLength,
-         uint16_t spawn_col_offset = DefaultSpawnColOffset,
-         uint16_t spawn_row_offset = DefaultSpawnRowOffset)
+         int16_t spawn_col_offset = DefaultSpawnColOffset,
+         int16_t spawn_row_offset = DefaultSpawnRowOffset)
       : _board{board}, _rotation_system{std::move(rotation_system)},
         _randomizer{std::move(randomizer)},
         _spin_system{std::move(spin_system)},
@@ -144,8 +144,8 @@ private:
   uint64_t _score = 0;
   uint32_t _combo = 0;
   bool _back_to_back = false;
-  uint16_t _spawn_col_offset = 0;
-  uint16_t _spawn_row_offset = 0;
+  int16_t _spawn_col_offset = 0;
+  int16_t _spawn_row_offset = 0;
 
   std::unique_ptr<RotationSystem> _rotation_system;
   std::unique_ptr<Randomizer> _randomizer;

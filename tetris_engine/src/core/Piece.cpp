@@ -186,8 +186,8 @@ ActivePiece spawn_from_piece_type(PieceType type) {
                           .col = DefaultSpawnColOffset}};
 }
 
-ActivePiece spawn_from_piece_type(PieceType type, uint16_t row_offset,
-                                  uint16_t col_offset) {
+ActivePiece spawn_from_piece_type(PieceType type, int16_t row_offset,
+                                  int16_t col_offset) {
   return {.piece = get_from_piece_type(type),
           .pos = Position{.row = row_offset, .col = col_offset}};
 }
