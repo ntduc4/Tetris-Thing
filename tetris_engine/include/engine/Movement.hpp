@@ -1,3 +1,5 @@
+#pragma once
+
 #include "core/Piece.hpp"
 #include <cstdint>
 #include <vector>

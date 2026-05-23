@@ -146,4 +146,12 @@ void Engine::receive_garbage(const GarbageEvent &garbage) {
   // TODO: Apply a garbage event.
 }
 
+std::vector<Placement> Engine::generate_active_piece_placement() const {
+  return {};
+}
+
+std::vector<Placement> Engine::generate_hold_piece_placement() const {
+  return {};
+}
+
 } // namespace tetris

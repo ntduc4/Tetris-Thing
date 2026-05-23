@@ -43,9 +43,13 @@ void test_spin_system_contract() {
   FakeSpinSystem spin_system;
 
   tetris::ActivePiece t_piece = tetris::spawn_from_piece_type(tetris::PieceType::T);
-  require(spin_system.detect(board, t_piece, false) == tetris::SpinType::None,
+  require(spin_system.detect(board, t_piece,
+                             tetris::SpinContext{.last_movement = tetris::Movement::None}) ==
+              tetris::SpinType::None,
           "spin detection should ignore non-rotation actions");
-  require(spin_system.detect(board, t_piece, true) == tetris::SpinType::Full,
+  require(spin_system.detect(board, t_piece,
+                             tetris::SpinContext{.last_movement = tetris::Movement::CW}) ==
+              tetris::SpinType::Full,
           "spin detection should identify a full T-spin when appropriate");
 }
 

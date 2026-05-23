@@ -11,6 +11,7 @@
 #include "engine/Spin.hpp"
 
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -21,6 +22,12 @@ namespace tetris {
 struct GarbageEvent {
   uint16_t lines = 0;
   uint16_t hole_col = 0;
+};
+
+// Tracks garbage that has been received but not yet applied to the board.
+struct PendingGarbage {
+  GarbageEvent event;
+  uint16_t delay_ticks = 0;
 };
 
 // Describes the outcome of a player-issued action.
@@ -152,7 +159,22 @@ private:
   bool _back_to_back = false;
   int16_t _spawn_col_offset = 0;
   int16_t _spawn_row_offset = 0;
+
+  // Tick-driven runtime state.
+  uint64_t _tick_count = 0;
+  uint32_t _gravity_progress = 0;
+  bool _grounded_last_tick = false;
+  uint16_t _lock_timer = 0;
+  uint16_t _lock_resets_used = 0;
+  bool _last_tick_was_player_action = false;
+
+  // Spin and placement tracking for lock resolution.
   SpinContext _spin_context;
+  std::optional<Placement> _last_successful_placement;
+
+  // Pending garbage state processed by tick progression.
+  std::deque<PendingGarbage> _pending_garbage;
+  uint16_t _garbage_queue_delay = 0;
 
   std::unique_ptr<RotationSystem> _rotation_system;
   std::unique_ptr<Randomizer> _randomizer;

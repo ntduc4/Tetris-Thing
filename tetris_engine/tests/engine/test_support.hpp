@@ -86,8 +86,10 @@ class FakeSpinSystem : public tetris::SpinSystem {
 public:
   tetris::SpinType detect(const tetris::Board &,
                           const tetris::ActivePiece &piece,
-                          bool last_action_was_rotation) const override {
-    if (!last_action_was_rotation)
+                          const tetris::SpinContext &context) const override {
+    if (context.last_movement != tetris::Movement::CW &&
+        context.last_movement != tetris::Movement::CCW &&
+        context.last_movement != tetris::Movement::HalfRotation)
       return tetris::SpinType::None;
     return piece.piece.type() == tetris::PieceType::T ? tetris::SpinType::Full
                                                       : tetris::SpinType::Mini;
