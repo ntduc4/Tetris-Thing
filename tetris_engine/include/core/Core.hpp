@@ -39,9 +39,4 @@ enum class Action {
   Hold
 };
 
-struct Placement {
-  Position pos;
-  Rotation rotation;
-};
-
 } // namespace tetris

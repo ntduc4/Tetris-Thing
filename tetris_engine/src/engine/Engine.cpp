@@ -133,7 +133,8 @@ LockResult Engine::hard_drop() {
 }
 
 LockResult Engine::lock_active_piece() {
-  // TODO: Lock the active piece and resolve line clears.
+  // TODO: Lock the active piece and resolve line clears, update score, check
+  // spin, etc...
   return {};
 }
 

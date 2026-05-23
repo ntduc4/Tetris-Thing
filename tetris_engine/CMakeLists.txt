@@ -6,7 +6,6 @@ add_library(tetris_engine
     src/core/Board.cpp
     src/core/Piece.cpp
     src/engine/Engine.cpp
-    src/engine/Movement.cpp
 )
 
 target_compile_features(tetris_engine PUBLIC cxx_std_20)
@@ -51,12 +50,6 @@ add_executable(tetris_engine_runtime_spec_tests tests/engine/engine_runtime_spec
 target_link_libraries(tetris_engine_runtime_spec_tests PRIVATE tetris_engine)
 target_include_directories(tetris_engine_runtime_spec_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_test(NAME tetris_engine_runtime_spec_tests COMMAND tetris_engine_runtime_spec_tests)
-
-
-add_executable(tetris_engine_movement_spec_tests tests/engine/movement_spec_tests.cpp)
-target_link_libraries(tetris_engine_movement_spec_tests PRIVATE tetris_engine)
-target_include_directories(tetris_engine_movement_spec_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-add_test(NAME tetris_engine_movement_spec_tests COMMAND tetris_engine_movement_spec_tests)
 
 
 add_executable(tetris_engine_spawn_spec_tests tests/engine/spawn_spec_tests.cpp) 

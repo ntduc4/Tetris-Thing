@@ -4,6 +4,7 @@
 #include "core/Core.hpp"
 #include "core/Piece.hpp"
 #include "engine/Attack.hpp"
+#include "engine/Movement.hpp"
 #include "engine/RNG.hpp"
 #include "engine/Rotation.hpp"
 #include "engine/Score.hpp"
@@ -134,6 +135,11 @@ public:
   // Adds an incoming garbage packet.
   void receive_garbage(const GarbageEvent &garbage);
 
+  // Generate all possible piece placement for active piece
+  std::vector<Placement> generate_active_piece_placement() const;
+  // Generate all possible piece placement for hold piece
+  std::vector<Placement> generate_hold_piece_placement() const;
+
 private:
   Board _board;
   std::optional<ActivePiece> _active_piece;
@@ -146,6 +152,7 @@ private:
   bool _back_to_back = false;
   int16_t _spawn_col_offset = 0;
   int16_t _spawn_row_offset = 0;
+  SpinContext _spin_context;
 
   std::unique_ptr<RotationSystem> _rotation_system;
   std::unique_ptr<Randomizer> _randomizer;
