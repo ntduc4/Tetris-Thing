@@ -18,19 +18,19 @@
 
 namespace tetris {
 
-// Represents an incoming garbage packet.
+/** Represents an incoming garbage packet. */
 struct GarbageEvent {
   uint16_t lines = 0;
   uint16_t hole_col = 0;
 };
 
-// Tracks garbage that has been received but not yet applied to the board.
+/** Tracks garbage that has been received but not yet applied to the board. */
 struct PendingGarbage {
   GarbageEvent event;
   uint16_t delay_ticks = 0;
 };
 
-// Describes the outcome of a player-issued action.
+/** Describes the outcome of a player-issued action. */
 struct StepResult {
   bool moved = false;
   bool locked = false;
@@ -40,14 +40,14 @@ struct StepResult {
   uint16_t lines_cleared = 0;
 };
 
-// Describes the outcome of a gravity tick.
+/** Describes the outcome of a gravity tick. */
 struct TickResult {
   bool moved_down = false;
   bool locked = false;
   bool game_over = false;
 };
 
-// Describes the outcome of locking the active piece.
+/** Describes the outcome of locking the active piece. */
 struct LockResult {
   bool game_over = false;
   uint16_t lines_cleared = 0;
@@ -56,9 +56,27 @@ struct LockResult {
   uint16_t attack_sent = 0;
 };
 
+/**
+ * Single-player Tetris engine runtime.
+ *
+ * Engine owns board state, active/held pieces, queue preview state, scoring
+ * state, garbage state, and injected rule systems.
+ */
 class Engine {
 public:
-  // Creates a single-player engine with pluggable rules and services.
+  /**
+   * Creates a single-player engine with pluggable rules and services.
+   *
+   * @param board Initial board state.
+   * @param rotation_system Rotation and kick implementation.
+   * @param randomizer Piece source implementation.
+   * @param spin_system Optional spin classifier.
+   * @param score_system Optional scoring rules.
+   * @param attack_scheme Optional garbage attack rules.
+   * @param preview_count Number of preview pieces exposed by preview_queue().
+   * @param spawn_col_offset Root column used when spawning pieces.
+   * @param spawn_row_offset Root row used when spawning pieces.
+   */
   Engine(Board board, std::unique_ptr<RotationSystem> rotation_system,
          std::unique_ptr<Randomizer> randomizer,
          std::unique_ptr<SpinSystem> spin_system = nullptr,
@@ -75,76 +93,87 @@ public:
         _spawn_col_offset{spawn_col_offset},
         _spawn_row_offset{spawn_row_offset} {};
 
-  // Resets engine state and reseeds the piece source.
+  /** Resets engine state and reseeds the piece source. */
   void reset(uint64_t seed = 0);
 
-  // Returns the current board state.
+  /** Returns the current board state. */
   const Board &board() const { return _board; }
-  // Returns the currently active falling piece.
+  /** Returns the currently active falling piece. */
   const std::optional<ActivePiece> &active_piece() const {
     return _active_piece;
   }
-  // Returns the held piece if one exists.
+  /** Returns the held piece if one exists. */
   std::optional<PieceType> hold_piece() const { return _hold_piece; }
-  // Returns the visible preview queue.
+  /** Returns the visible preview queue. */
   std::vector<PieceType> preview_queue() const;
-  // Render the board
+  /** Renders the current board state. */
   std::vector<std::vector<Cell>> render() const;
 
-  // Returns whether the engine has reached game over.
+  /** Returns whether the engine has reached game over. */
   bool game_over() const { return _game_over; }
-  // Returns whether hold is currently available.
+  /** Returns whether hold is currently available. */
   bool can_hold() const { return _can_hold; }
-  // Returns the total cleared lines tracked by the engine.
+  /** Returns the total cleared lines tracked by the engine. */
   uint32_t lines_cleared() const { return _lines_cleared; }
-  // Returns the accumulated score.
+  /** Returns the accumulated score. */
   uint64_t score() const { return _score; }
-  // Returns the current combo counter.
+  /** Returns the current combo counter. */
   uint32_t combo() const { return _combo; }
-  // Returns whether back-to-back is currently active.
+  /** Returns whether back-to-back is currently active. */
   bool back_to_back() const { return _back_to_back; }
 
-  // Spawns the next piece from the randomizer.
+  /**
+   * Spawns the next piece from the randomizer.
+   *
+   * @param clutch_clear Whether to search for a shifted valid spawn position
+   * when the default spawn position is blocked.
+   * @return true when a piece was spawned and consumed from the randomizer.
+   */
   bool spawn_next_piece(bool clutch_clear = false);
-  // Swaps the active piece with the hold slot.
+  /**
+   * Swaps the active piece with the hold slot.
+   *
+   * @param ignore_hold Whether to bypass the current can_hold() gate.
+   * @return true when the hold operation succeeds.
+   */
   bool hold(bool ignore_hold = false);
 
-  // Attempts to move the active piece left.
+  /** Attempts to move the active piece left by up to amount columns. */
   bool try_move_left(int16_t amount = 1);
-  // Attempts to move the active piece right.
+  /** Attempts to move the active piece right by up to amount columns. */
   bool try_move_right(int16_t amount = 1);
-  // Attempts to move the active piece down.
+  /** Attempts to move the active piece down by up to amount rows. */
   bool try_soft_drop(int16_t amount = 1);
-  // Attempts to rotate the active piece clockwise.
+  /** Attempts to rotate the active piece clockwise. */
   bool try_rotate_cw();
-  // Attempts to rotate the active piece counterclockwise.
+  /** Attempts to rotate the active piece counterclockwise. */
   bool try_rotate_ccw();
-  // Attempts to rotate the active piece by 180 degrees.
+  /** Attempts to rotate the active piece by 180 degrees. */
   bool try_rotate_180();
 
-  // Returns the ghost placement for the active piece.
+  /** Returns the ghost placement for the active piece. */
   std::optional<ActivePiece> ghost_piece() const;
-  // Returns how far the active piece can hard drop.
+  /** Returns how far the active piece can hard drop. */
   uint16_t hard_drop_distance() const;
 
-  // Applies a high-level player action.
+  /** Applies a high-level player action. */
   StepResult step(Action action);
-  // Advances the game by one gravity tick.
+  /** Advances the game by one gravity tick. */
   TickResult tick();
 
-  // Hard drops, locks, and resolves the active piece.
+  /** Hard drops, locks, and resolves the active piece. */
   LockResult hard_drop();
-  // Locks the current active piece and resolves resulting state.
+  /** Locks the current active piece and resolves resulting state. */
   LockResult lock_active_piece();
 
-  // Adds incoming garbage with the requested hole column.
+  /** Adds incoming garbage with the requested hole column. */
   void receive_garbage(uint16_t lines, uint16_t hole_col);
-  // Adds an incoming garbage packet.
+  /** Adds an incoming garbage packet. */
   void receive_garbage(const GarbageEvent &garbage);
 
-  // Generate all possible piece placement for active piece
+  /** Generates all possible placements for the active piece. */
   std::vector<Placement> generate_active_piece_placement() const;
-  // Generate all possible piece placement for hold piece
+  /** Generates all possible placements for the held piece. */
   std::vector<Placement> generate_hold_piece_placement() const;
 
 private:
@@ -160,7 +189,7 @@ private:
   int16_t _spawn_col_offset = 0;
   int16_t _spawn_row_offset = 0;
 
-  // Tick-driven runtime state.
+  /** Tick-driven runtime state. */
   uint64_t _tick_count = 0;
   uint32_t _gravity_progress = 0;
   bool _grounded_last_tick = false;
@@ -168,11 +197,11 @@ private:
   uint16_t _lock_resets_used = 0;
   bool _last_tick_was_player_action = false;
 
-  // Spin and placement tracking for lock resolution.
+  /** Spin and placement tracking for lock resolution. */
   SpinContext _spin_context;
   std::optional<Placement> _last_successful_placement;
 
-  // Pending garbage state processed by tick progression.
+  /** Pending garbage state processed by tick progression. */
   std::deque<PendingGarbage> _pending_garbage;
   uint16_t _garbage_queue_delay = 0;
 

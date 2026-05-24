@@ -6,7 +6,7 @@
 
 namespace tetris {
 
-// Movement enum
+/** Fine-grained movement labels used for placement and spin metadata. */
 enum class Movement : uint8_t {
   Left,
   Right,
@@ -19,6 +19,7 @@ enum class Movement : uint8_t {
   None
 };
 
+/** Records a final piece placement and the moves that reached it. */
 struct Placement {
   std::vector<Movement> moves;
   PieceType type;

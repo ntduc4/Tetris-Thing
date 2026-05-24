@@ -6,7 +6,7 @@
 
 namespace tetris {
 
-// Captures the scoring inputs produced by a lock or drop.
+/** Captures the scoring inputs produced by a lock or drop. */
 struct ScoreEvent {
   uint16_t lines_cleared = 0;
   SpinType spin = SpinType::None;
@@ -17,19 +17,21 @@ struct ScoreEvent {
   uint16_t soft_drop_cells = 0;
 };
 
+/** Interface for calculating points awarded by score events. */
 class ScoreSystem {
 public:
+  /** Destroys a score system through the base interface. */
   virtual ~ScoreSystem() = default;
 
-  // Returns the score value awarded for a scoring event.
+  /** Returns the score value awarded for a scoring event. */
   virtual uint64_t score(const ScoreEvent &event) const = 0;
 };
 
-// Traditional line-clear scoring.
+/** Traditional line-clear scoring. */
 class Classical : public ScoreSystem {};
-// Time-limited score attack rules.
+/** Time-limited score attack rules. */
 class Blitz : public ScoreSystem {};
-// Line-race scoring rules.
+/** Line-race scoring rules. */
 class Sprint : public ScoreSystem {};
 
 } // namespace tetris
