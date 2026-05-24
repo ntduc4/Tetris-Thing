@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <vector>
 
 #include "./Core.hpp"
@@ -8,7 +9,7 @@
 namespace tetris {
 
 /** Tetromino piece identity. */
-enum class PieceType { I, O, T, S, Z, J, L };
+enum class PieceType : uint8_t { I, O, T, S, Z, J, L };
 
 /** Immutable piece identity plus mutable rotation state. */
 class Piece {
@@ -56,8 +57,8 @@ public:
 
 private:
   Rotation _rotation;
-  const PieceType _type;
-  const Cell _cell_type;
+  PieceType _type;
+  Cell _cell_type;
 };
 
 /** A falling piece and its board-space root position. */

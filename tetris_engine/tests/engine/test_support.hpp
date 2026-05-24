@@ -15,38 +15,12 @@
 
 class FakeRotationSystem : public tetris::RotationSystem {
 public:
-  std::optional<tetris::Offset> kick_offset(tetris::PieceType,
-                                            tetris::Rotation from,
-                                            tetris::Rotation to,
-                                            uint8_t check_num) const override {
-    if (from == tetris::Rotation::North && to == tetris::Rotation::East &&
-        check_num == 0)
-      return tetris::Offset{.row = 0, .col = 1};
-    return std::nullopt;
-  }
-
-  std::optional<tetris::ActivePiece>
-  try_rotate_cw(const tetris::Board &,
-                const tetris::ActivePiece &piece) const override {
-    tetris::ActivePiece rotated{.piece = piece.piece, .pos = piece.pos};
-    rotated.piece.rotate_cw();
-    return rotated;
-  }
-
-  std::optional<tetris::ActivePiece>
-  try_rotate_ccw(const tetris::Board &,
-                 const tetris::ActivePiece &piece) const override {
-    tetris::ActivePiece rotated{.piece = piece.piece, .pos = piece.pos};
-    rotated.piece.rotate_ccw();
-    return rotated;
-  }
-
-  std::optional<tetris::ActivePiece>
-  try_rotate_180(const tetris::Board &,
-                 const tetris::ActivePiece &piece) const override {
-    tetris::ActivePiece rotated{.piece = piece.piece, .pos = piece.pos};
-    rotated.piece.rotate_180();
-    return rotated;
+  std::vector<tetris::Offset>
+  kick_offsets(tetris::PieceType, tetris::Rotation from,
+               tetris::Rotation to) const override {
+    if (from == tetris::Rotation::North && to == tetris::Rotation::East)
+      return {{.row = 0, .col = 1}};
+    return {{.row = 0, .col = 0}};
   }
 };
 

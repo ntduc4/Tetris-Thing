@@ -23,19 +23,13 @@ void test_randomizer_contract() {
 }
 
 void test_rotation_system_contract() {
-  tetris::Board board(10, 24);
-  tetris::ActivePiece piece = tetris::spawn_from_piece_type(tetris::PieceType::T);
   FakeRotationSystem rotation_system;
 
-  auto kick = rotation_system.kick_offset(tetris::PieceType::T,
-                                          tetris::Rotation::North,
-                                          tetris::Rotation::East, 0);
-  require(kick.has_value() && kick->col == 1,
+  auto kicks = rotation_system.kick_offsets(tetris::PieceType::T,
+                                            tetris::Rotation::North,
+                                            tetris::Rotation::East);
+  require(kicks.size() == 1 && kicks[0].col == 1,
           "rotation system should expose kick data for a transition");
-
-  auto rotated = rotation_system.try_rotate_cw(board, piece);
-  require(rotated.has_value() && rotated->piece.rotation() == tetris::Rotation::East,
-          "rotation system should return a rotated piece when rotation succeeds");
 }
 
 void test_spin_system_contract() {

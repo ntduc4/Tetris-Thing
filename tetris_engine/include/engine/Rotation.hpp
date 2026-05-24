@@ -4,34 +4,34 @@
 #include "core/Core.hpp"
 #include "core/Piece.hpp"
 
-#include <optional>
+#include <vector>
 
 namespace tetris {
 
-/** Interface for piece rotation and wall-kick behavior. */
+/** Interface for piece wall-kick data. */
 class RotationSystem {
 public:
   /** Destroys a rotation system through the base interface. */
   virtual ~RotationSystem() = default;
 
-  /** Returns the kick offset to test for a rotation transition. */
-  virtual std::optional<Offset> kick_offset(PieceType piece, Rotation from,
-                                            Rotation to,
-                                            uint8_t check_num) const = 0;
-  /** Attempts a clockwise rotation and returns the rotated piece on success. */
-  virtual std::optional<ActivePiece>
-  try_rotate_cw(const Board &board, const ActivePiece &piece) const = 0;
-  /** Attempts a counterclockwise rotation and returns the rotated piece on success. */
-  virtual std::optional<ActivePiece>
-  try_rotate_ccw(const Board &board, const ActivePiece &piece) const = 0;
-  /** Attempts a 180-degree rotation and returns the rotated piece on success. */
-  virtual std::optional<ActivePiece>
-  try_rotate_180(const Board &board, const ActivePiece &piece) const = 0;
+  /** Returns the ordered kick offsets to test for a rotation transition. */
+  virtual std::vector<Offset> kick_offsets(PieceType piece, Rotation from,
+                                           Rotation to) const = 0;
 };
 
 /** Standard rotation system with wall-kick support. */
-class SRS : public RotationSystem {};
+class SRS : public RotationSystem {
+public:
+  std::vector<Offset> kick_offsets(PieceType, Rotation, Rotation) const override {
+    return {};
+  }
+};
 /** Rotation system that rejects all rotations. */
-class None : public RotationSystem {};
+class None : public RotationSystem {
+public:
+  std::vector<Offset> kick_offsets(PieceType, Rotation, Rotation) const override {
+    return {};
+  }
+};
 
 } // namespace tetris

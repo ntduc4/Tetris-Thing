@@ -6,6 +6,7 @@
 
 #include <deque>
 #include <memory>
+#include <string>
 
 namespace {
 
@@ -21,189 +22,49 @@ public:
 
 class NoRotationSystem : public tetris::RotationSystem {
 public:
-  std::optional<tetris::Offset> kick_offset(tetris::PieceType, tetris::Rotation,
-                                            tetris::Rotation,
-                                            uint8_t) const override {
-    return std::nullopt;
-  }
-
-  std::optional<tetris::ActivePiece>
-  try_rotate_cw(const tetris::Board &, const tetris::ActivePiece &) const override {
-    return std::nullopt;
-  }
-
-  std::optional<tetris::ActivePiece>
-  try_rotate_ccw(const tetris::Board &, const tetris::ActivePiece &) const override {
-    return std::nullopt;
-  }
-
-  std::optional<tetris::ActivePiece>
-  try_rotate_180(const tetris::Board &, const tetris::ActivePiece &) const override {
-    return std::nullopt;
+  std::vector<tetris::Offset>
+  kick_offsets(tetris::PieceType, tetris::Rotation,
+               tetris::Rotation) const override {
+    return {};
   }
 };
 
 class InPlaceRotationSystem : public tetris::RotationSystem {
 public:
-  std::optional<tetris::Offset> kick_offset(tetris::PieceType, tetris::Rotation,
-                                            tetris::Rotation,
-                                            uint8_t) const override {
-    return std::nullopt;
-  }
-
-  std::optional<tetris::ActivePiece>
-  try_rotate_cw(const tetris::Board &board,
-                const tetris::ActivePiece &piece) const override {
-    return rotate_if_placeable(board, piece, 1);
-  }
-
-  std::optional<tetris::ActivePiece>
-  try_rotate_ccw(const tetris::Board &board,
-                 const tetris::ActivePiece &piece) const override {
-    return rotate_if_placeable(board, piece, -1);
-  }
-
-  std::optional<tetris::ActivePiece>
-  try_rotate_180(const tetris::Board &board,
-                 const tetris::ActivePiece &piece) const override {
-    return rotate_if_placeable(board, piece, 2);
-  }
-
-private:
-  static std::optional<tetris::ActivePiece>
-  rotate_if_placeable(const tetris::Board &board, const tetris::ActivePiece &piece,
-                      int turns) {
-    tetris::ActivePiece rotated{.piece = piece.piece, .pos = piece.pos};
-    if (turns < 0) {
-      rotated.piece.rotate_ccw();
-    } else {
-      for (int i = 0; i < turns; ++i)
-        rotated.piece.rotate_cw();
-    }
-    return board.collide(rotated) ? std::optional<tetris::ActivePiece>(rotated)
-                                  : std::nullopt;
+  std::vector<tetris::Offset>
+  kick_offsets(tetris::PieceType, tetris::Rotation,
+               tetris::Rotation) const override {
+    return {{.row = 0, .col = 0}};
   }
 };
 
 class MultiKickRotationSystem : public tetris::RotationSystem {
 public:
-  std::optional<tetris::Offset> kick_offset(tetris::PieceType, tetris::Rotation,
-                                            tetris::Rotation,
-                                            uint8_t check_num) const override {
-    if (check_num == 0)
-      return tetris::Offset{.row = 0, .col = -1};
-    if (check_num == 1)
-      return tetris::Offset{.row = 0, .col = 2};
-    if (check_num == 2)
-      return tetris::Offset{.row = -1, .col = 1};
-    return std::nullopt;
-  }
-
-  std::optional<tetris::ActivePiece>
-  try_rotate_cw(const tetris::Board &board,
-                const tetris::ActivePiece &piece) const override {
-    return rotate_with_kicks(board, piece, 1, {{0, -1}, {0, 2}, {-1, 1}});
-  }
-
-  std::optional<tetris::ActivePiece>
-  try_rotate_ccw(const tetris::Board &board,
-                 const tetris::ActivePiece &piece) const override {
-    return rotate_with_kicks(board, piece, -1, {{0, 1}, {-1, 0}, {0, -2}});
-  }
-
-  std::optional<tetris::ActivePiece>
-  try_rotate_180(const tetris::Board &board,
-                 const tetris::ActivePiece &piece) const override {
-    return rotate_with_kicks(board, piece, 2, {{-1, 0}, {0, 1}, {-1, 1}});
-  }
-
-private:
-  static std::optional<tetris::ActivePiece>
-  rotate_with_kicks(const tetris::Board &board, const tetris::ActivePiece &piece,
-                    int turns,
-                    std::initializer_list<tetris::Offset> kicks) {
-    tetris::ActivePiece rotated{.piece = piece.piece, .pos = piece.pos};
-    if (turns == -1) {
-      rotated.piece.rotate_ccw();
-    } else {
-      for (int i = 0; i < turns; ++i)
-        rotated.piece.rotate_cw();
-    }
-
-    if (board.collide(rotated))
-      return rotated;
-
-    for (tetris::Offset kick : kicks) {
-      tetris::ActivePiece kicked{.piece = rotated.piece,
-                                 .pos = tetris::Position{
-                                     .row = static_cast<int16_t>(rotated.pos.row + kick.row),
-                                     .col = static_cast<int16_t>(rotated.pos.col + kick.col)}};
-      if (board.collide(kicked))
-        return kicked;
-    }
-
-    return std::nullopt;
+  std::vector<tetris::Offset>
+  kick_offsets(tetris::PieceType, tetris::Rotation from,
+               tetris::Rotation to) const override {
+    if (from == tetris::Rotation::North && to == tetris::Rotation::East)
+      return {{0, 0}, {0, -1}, {0, 2}, {-1, 1}};
+    if (from == tetris::Rotation::East && to == tetris::Rotation::North)
+      return {{0, 0}, {0, 1}, {-1, 0}, {0, -2}};
+    if (from == tetris::Rotation::North && to == tetris::Rotation::South)
+      return {{0, 0}, {-1, 0}, {0, 1}, {-1, 1}};
+    return {{.row = 0, .col = 0}};
   }
 };
 
 class NotchRotationSystem : public tetris::RotationSystem {
 public:
-  std::optional<tetris::Offset> kick_offset(tetris::PieceType, tetris::Rotation,
-                                            tetris::Rotation,
-                                            uint8_t check_num) const override {
-    if (check_num == 0)
-      return tetris::Offset{.row = -1, .col = 0};
-    if (check_num == 1)
-      return tetris::Offset{.row = -1, .col = 1};
-    if (check_num == 2)
-      return tetris::Offset{.row = 0, .col = 1};
-    return std::nullopt;
-  }
-
-  std::optional<tetris::ActivePiece>
-  try_rotate_cw(const tetris::Board &board,
-                const tetris::ActivePiece &piece) const override {
-    return rotate_with_kicks(board, piece, 1, {{-1, 0}, {-1, 1}, {0, 1}});
-  }
-
-  std::optional<tetris::ActivePiece>
-  try_rotate_ccw(const tetris::Board &board,
-                 const tetris::ActivePiece &piece) const override {
-    return rotate_with_kicks(board, piece, -1, {{0, 1}, {-1, 1}, {-1, 0}});
-  }
-
-  std::optional<tetris::ActivePiece>
-  try_rotate_180(const tetris::Board &board,
-                 const tetris::ActivePiece &piece) const override {
-    return rotate_with_kicks(board, piece, 2, {{-1, 0}, {-2, 0}, {-1, 1}});
-  }
-
-private:
-  static std::optional<tetris::ActivePiece>
-  rotate_with_kicks(const tetris::Board &board, const tetris::ActivePiece &piece,
-                    int turns,
-                    std::initializer_list<tetris::Offset> kicks) {
-    tetris::ActivePiece rotated{.piece = piece.piece, .pos = piece.pos};
-    if (turns == -1) {
-      rotated.piece.rotate_ccw();
-    } else {
-      for (int i = 0; i < turns; ++i)
-        rotated.piece.rotate_cw();
-    }
-
-    if (board.collide(rotated))
-      return rotated;
-
-    for (tetris::Offset kick : kicks) {
-      tetris::ActivePiece kicked{.piece = rotated.piece,
-                                 .pos = tetris::Position{
-                                     .row = static_cast<int16_t>(rotated.pos.row + kick.row),
-                                     .col = static_cast<int16_t>(rotated.pos.col + kick.col)}};
-      if (board.collide(kicked))
-        return kicked;
-    }
-
-    return std::nullopt;
+  std::vector<tetris::Offset>
+  kick_offsets(tetris::PieceType, tetris::Rotation from,
+               tetris::Rotation to) const override {
+    if (from == tetris::Rotation::North && to == tetris::Rotation::East)
+      return {{0, 0}, {-1, 0}, {-1, 1}, {0, 1}};
+    if (from == tetris::Rotation::East && to == tetris::Rotation::North)
+      return {{0, 0}, {0, 1}, {-1, 1}, {-1, 0}};
+    if (from == tetris::Rotation::North && to == tetris::Rotation::South)
+      return {{0, 0}, {-1, 0}, {-2, 0}, {-1, 1}};
+    return {{.row = 0, .col = 0}};
   }
 };
 
@@ -262,7 +123,7 @@ bool same_spin_context(const tetris::SpinContext &lhs,
 }
 
 bool same_pending_garbage(const std::deque<tetris::PendingGarbage> &lhs,
-                         const std::deque<tetris::PendingGarbage> &rhs) {
+                          const std::deque<tetris::PendingGarbage> &rhs) {
   if (lhs.size() != rhs.size())
     return false;
   for (size_t i = 0; i < lhs.size(); ++i) {
@@ -272,6 +133,36 @@ bool same_pending_garbage(const std::deque<tetris::PendingGarbage> &lhs,
       return false;
   }
   return true;
+}
+
+void require_spin_context_after_move(const tetris::Engine &engine,
+                                     tetris::Movement movement,
+                                     const tetris::ActivePiece &previous_piece,
+                                     const char *message) {
+  require(engine._spin_context.last_movement == movement,
+          std::string("spin_context.last_movement: ") + message);
+  require(same_piece(engine._spin_context.previous_piece,
+                     std::optional<tetris::ActivePiece>(previous_piece)),
+          std::string("spin_context.previous_piece: ") + message);
+  require(!engine._spin_context.used_kick,
+          std::string("spin_context.used_kick: ") + message);
+  require(!engine._spin_context.kick_index.has_value(),
+          std::string("spin_context.kick_index: ") + message);
+}
+
+void require_spin_context_after_rotation(
+    const tetris::Engine &engine, tetris::Movement movement,
+    const tetris::ActivePiece &previous_piece, bool used_kick,
+    std::optional<uint8_t> kick_index, const char *message) {
+  require(engine._spin_context.last_movement == movement,
+          std::string("spin_context.last_movement: ") + message);
+  require(same_piece(engine._spin_context.previous_piece,
+                     std::optional<tetris::ActivePiece>(previous_piece)),
+          std::string("spin_context.previous_piece: ") + message);
+  require(engine._spin_context.used_kick == used_kick,
+          std::string("spin_context.used_kick: ") + message);
+  require(engine._spin_context.kick_index == kick_index,
+          std::string("spin_context.kick_index: ") + message);
 }
 
 void set_active_piece(tetris::Engine &engine, const tetris::ActivePiece &piece) {
@@ -327,6 +218,8 @@ void require_no_state_change_after_false(const tetris::Engine &engine,
                                          bool result,
                                          const char *failure_message) {
   require(!result, failure_message);
+  require(same_spin_context(before.spin_context, engine._spin_context),
+          "false result should not change spin context");
   require(same_snapshot(before, snapshot(engine)),
           "false result should not change any engine state");
 }
@@ -489,6 +382,8 @@ void test_try_move_left_supports_partial_and_furthest_movement() {
             "negative left amount should move to the furthest reachable column");
     require(engine.active_piece()->pos.col == -1,
             "negative left amount should move the piece to the left wall");
+    require_spin_context_after_move(engine, Movement::Left, active,
+                                    "left movement should update spin context");
   }
 
   {
@@ -504,6 +399,8 @@ void test_try_move_left_supports_partial_and_furthest_movement() {
             "left movement should return true when the piece can move partially");
     require(engine.active_piece()->pos.col == 3,
             "left movement should stop at the last collision-free column");
+    require_spin_context_after_move(engine, Movement::Left, active,
+                                    "partial left movement should update spin context");
   }
 
   {
@@ -537,6 +434,8 @@ void test_try_move_right_supports_partial_and_furthest_movement() {
             "negative right amount should move to the furthest reachable column");
     require(engine.active_piece()->pos.col == 7,
             "negative right amount should move the piece to the right wall");
+    require_spin_context_after_move(engine, Movement::Right, active,
+                                    "right movement should update spin context");
   }
 
   {
@@ -552,6 +451,8 @@ void test_try_move_right_supports_partial_and_furthest_movement() {
             "right movement should return true when the piece can move partially");
     require(engine.active_piece()->pos.col == 5,
             "right movement should stop at the last collision-free column");
+    require_spin_context_after_move(engine, Movement::Right, active,
+                                    "partial right movement should update spin context");
   }
 
   {
@@ -585,6 +486,8 @@ void test_try_soft_drop_supports_partial_and_furthest_movement() {
             "negative soft drop should move to the furthest reachable row");
     require(engine.active_piece()->pos.row == -1,
             "negative soft drop should place the piece on the floor");
+    require_spin_context_after_move(engine, Movement::SoftDrop, active,
+                                    "soft drop should update spin context");
   }
 
   {
@@ -600,6 +503,8 @@ void test_try_soft_drop_supports_partial_and_furthest_movement() {
             "soft drop should return true when the piece can move part of the requested amount");
     require(engine.active_piece()->pos.row == 3,
             "soft drop should stop at the last collision-free row");
+    require_spin_context_after_move(engine, Movement::SoftDrop, active,
+                                    "partial soft drop should update spin context");
   }
 
   {
@@ -636,6 +541,9 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
             "clockwise rotation should update the active piece rotation");
     require(engine.active_piece()->pos.col == 4,
             "in-place rotation should not move the piece when no kick is needed");
+    require_spin_context_after_rotation(engine, Movement::CW, active, false,
+                                        std::nullopt,
+                                        "clockwise rotation should update spin context");
   }
 
   {
@@ -651,6 +559,9 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
             "counterclockwise rotation should succeed in open space");
     require(engine.active_piece()->piece.rotation() == Rotation::North,
             "counterclockwise rotation should update the active piece rotation");
+    require_spin_context_after_rotation(engine, Movement::CCW, active, false,
+                                        std::nullopt,
+                                        "counterclockwise rotation should update spin context");
   }
 
   {
@@ -665,12 +576,15 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
             "180 rotation should succeed in open space");
     require(engine.active_piece()->piece.rotation() == Rotation::South,
             "180 rotation should update the active piece rotation");
+    require_spin_context_after_rotation(engine, Movement::HalfRotation, active,
+                                        false, std::nullopt,
+                                        "180 rotation should update spin context");
   }
 
   {
     Board board(10, 24);
+    board.set(11, 4, Cell::Garbage);
     board.set(11, 5, Cell::Garbage);
-    board.set(12, 5, Cell::Garbage);
     Engine engine(board, std::make_unique<NoRotationSystem>(), make_randomizer());
     ActivePiece active = spawn_from_piece_type(PieceType::T);
     active.pos.row = 10;
@@ -686,8 +600,8 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
 
   {
     Board board(10, 24);
+    board.set(11, 4, Cell::Garbage);
     board.set(11, 5, Cell::Garbage);
-    board.set(12, 5, Cell::Garbage);
     Engine engine(board, std::make_unique<MultiKickRotationSystem>(),
                   make_randomizer());
     ActivePiece active = spawn_from_piece_type(PieceType::T);
@@ -701,16 +615,16 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
             "kicked rotation should update the active piece rotation");
     require(engine.active_piece()->pos.col == 6,
             "kicked rotation should apply the successful multi-kick offset");
+    require_spin_context_after_rotation(engine, Movement::CW, active, true, 2,
+                                        "kicked rotation should update spin context");
   }
 
   {
     Board board(10, 24);
+    board.set(11, 4, Cell::Garbage);
     board.set(11, 5, Cell::Garbage);
-    board.set(12, 5, Cell::Garbage);
     board.set(11, 6, Cell::Garbage);
-    board.set(12, 6, Cell::Garbage);
     board.set(11, 7, Cell::Garbage);
-    board.set(12, 7, Cell::Garbage);
     Engine engine(board, std::make_unique<MultiKickRotationSystem>(),
                   make_randomizer());
     ActivePiece active = spawn_from_piece_type(PieceType::T);
@@ -727,9 +641,7 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
 
   {
     Board board(10, 24);
-    board.set(12, 4, Cell::Garbage);
-    board.set(12, 5, Cell::Garbage);
-    board.set(11, 6, Cell::Garbage);
+    board.set(11, 5, Cell::Garbage);
     Engine engine(board, std::make_unique<NotchRotationSystem>(),
                   make_randomizer());
     ActivePiece active = spawn_from_piece_type(PieceType::L);
@@ -744,15 +656,14 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
     require(engine.active_piece()->pos.row == 9 &&
                 engine.active_piece()->pos.col == 5,
             "notch rotation should use the upward-right kick path");
+    require_spin_context_after_rotation(engine, Movement::CW, active, true, 2,
+                                        "notch rotation should update spin context");
   }
 
   {
     Board board(10, 24);
-    board.set(12, 4, Cell::Garbage);
-    board.set(12, 5, Cell::Garbage);
-    board.set(11, 6, Cell::Garbage);
-    board.set(10, 6, Cell::Garbage);
     board.set(11, 5, Cell::Garbage);
+    board.set(11, 6, Cell::Garbage);
     Engine engine(board, std::make_unique<NotchRotationSystem>(),
                   make_randomizer());
     ActivePiece active = spawn_from_piece_type(PieceType::L);

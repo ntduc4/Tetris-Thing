@@ -11,6 +11,9 @@ void Engine::reset(uint64_t seed) {
   _board.reset();
   _can_hold = true;
   _game_over = false;
+  _active_piece = std::nullopt;
+  _hold_piece = std::nullopt;
+  _spin_context = {};
 }
 
 std::vector<PieceType> Engine::preview_queue() const {
@@ -32,7 +35,7 @@ bool Engine::spawn_next_piece(bool clutch_clear) {
       nextPiece.pos.col++;
       if (!_board.collide(nextPiece)) {
         _randomizer->pop();
-        _active_piece.emplace(nextPiece);
+        _active_piece = nextPiece;
         _can_hold = true;
         return true;
       }
@@ -42,25 +45,24 @@ bool Engine::spawn_next_piece(bool clutch_clear) {
   }
 
   _randomizer->pop();
-  _active_piece.emplace(nextPiece);
+  _active_piece = nextPiece;
   _can_hold = true;
   return true;
 }
 
 bool Engine::hold(bool ignore_hold) {
-  if (_game_over)
+  if (_game_over || !_active_piece.has_value())
     return false;
 
   if (!ignore_hold && !_can_hold)
     return false;
 
   if (!_hold_piece.has_value()) {
-    if (!_active_piece.has_value())
-      return false;
     PieceType temp = _active_piece->piece.type();
     if (spawn_next_piece()) {
       _hold_piece = temp;
       _can_hold = false;
+      _spin_context = {};
       return true;
     } else
       return false;
@@ -72,8 +74,9 @@ bool Engine::hold(bool ignore_hold) {
     return false;
 
   _hold_piece = _active_piece.value().piece.type();
-  _active_piece.emplace(nextPiece);
+  _active_piece = nextPiece;
   _can_hold = false;
+  _spin_context = {};
   return true;
 }
 
@@ -92,12 +95,12 @@ bool Engine::try_move_left(int16_t amount) {
       p.pos.col++;
       if (p.pos.col == _active_piece.value().pos.col)
         return false;
-      _active_piece.emplace(p);
+      _active_piece = p;
       return true;
     }
   }
 
-  _active_piece.emplace(p);
+  _active_piece = p;
   return true;
 }
 
@@ -116,12 +119,12 @@ bool Engine::try_move_right(int16_t amount) {
       p.pos.col--;
       if (p.pos.col == _active_piece.value().pos.col)
         return false;
-      _active_piece.emplace(p);
+      _active_piece = p;
       return true;
     }
   }
 
-  _active_piece.emplace(p);
+  _active_piece = p;
   return true;
 }
 
@@ -141,34 +144,49 @@ bool Engine::try_soft_drop(int16_t amount) {
       p.pos.row++;
       if (p.pos.row == _active_piece.value().pos.row)
         return false;
-      _active_piece.emplace(p);
+      _active_piece = p;
       return true;
     }
   }
 
-  _active_piece.emplace(p);
+  _active_piece = p;
   return true;
 }
 
 bool Engine::try_rotate_cw() {
-  // TODO: Implement clockwise rotation.
   if (_game_over || !_active_piece.has_value())
     return false;
-  return false;
+
+  ActivePiece p = _active_piece.value();
+
+  if (_board.collide(p))
+    return false;
+
+  return true;
 }
 
 bool Engine::try_rotate_ccw() {
-  // TODO: Implement counterclockwise rotation.
   if (_game_over || !_active_piece.has_value())
     return false;
-  return false;
+
+  ActivePiece p = _active_piece.value();
+
+  if (_board.collide(p))
+    return false;
+
+  return true;
 }
 
 bool Engine::try_rotate_180() {
-  // TODO: Implement 180-degree rotation.
   if (_game_over || !_active_piece.has_value())
     return false;
-  return false;
+
+  ActivePiece p = _active_piece.value();
+
+  if (_board.collide(p))
+    return false;
+
+  return true;
 }
 
 std::optional<ActivePiece> Engine::ghost_piece() const {

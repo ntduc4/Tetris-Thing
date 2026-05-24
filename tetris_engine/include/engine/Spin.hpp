@@ -16,12 +16,13 @@ struct SpinContext {
   /** Final board state should be passed separately as an immutable view. */
   Movement last_movement = Movement::None;
   /** Piece state before the last successful movement. */
-  std::optional<ActivePiece> previous_piece;
+  std::optional<ActivePiece> previous_piece = std::nullopt;
   /** Whether the last successful rotation required a kick. */
   bool used_kick = false;
   /** Which kick test succeeded, when applicable. */
-  std::optional<uint8_t> kick_index;
-  /** Whether the current lock was reached by player input or passive gravity. */
+  std::optional<uint8_t> kick_index = std::nullopt;
+  /** Whether the current lock was reached by player input or passive gravity.
+   */
   bool last_move_was_player_action = false;
 };
 
