@@ -331,6 +331,17 @@ void require_no_state_change_after_false(const tetris::Engine &engine,
           "false result should not change any engine state");
 }
 
+void require_no_state_change_after_lock_result(const tetris::Engine &engine,
+                                               const EngineSnapshot &before,
+                                               const tetris::LockResult &result,
+                                               const char *failure_message) {
+  require(!result.game_over && result.lines_cleared == 0 && !result.perfect_clear &&
+              result.spin == tetris::SpinType::None && result.attack_sent == 0,
+          failure_message);
+  require(same_snapshot(before, snapshot(engine)),
+          "failed lock-style action should not change any engine state");
+}
+
 void seed_nontrivial_state(tetris::Engine &engine) {
   engine._hold_piece = tetris::PieceType::S;
   engine._game_over = false;
@@ -381,6 +392,87 @@ void test_try_move_methods_return_false_and_preserve_state_when_no_active_piece(
                                       "try_rotate_ccw should fail without an active piece");
   require_no_state_change_after_false(engine, before, engine.try_rotate_180(),
                                       "try_rotate_180 should fail without an active piece");
+}
+
+void test_active_piece_actions_noop_when_active_piece_is_already_colliding() {
+  using namespace tetris;
+
+  Board board(10, 24);
+  board.set(4, 4, Cell::Garbage);
+  Engine engine(board, std::make_unique<MultiKickRotationSystem>(),
+                make_randomizer());
+  ActivePiece active = spawn_from_piece_type(PieceType::O);
+  active.pos.row = 3;
+  active.pos.col = 3;
+  set_active_piece(engine, active);
+  seed_nontrivial_state(engine);
+  set_active_piece(engine, active);
+
+  EngineSnapshot before = snapshot(engine);
+  require_no_state_change_after_false(
+      engine, before, engine.try_move_left(1),
+      "try_move_left should fail when the active piece is already colliding");
+  require_no_state_change_after_false(
+      engine, before, engine.try_move_right(1),
+      "try_move_right should fail when the active piece is already colliding");
+  require_no_state_change_after_false(
+      engine, before, engine.try_soft_drop(1),
+      "try_soft_drop should fail when the active piece is already colliding");
+  require_no_state_change_after_false(
+      engine, before, engine.try_rotate_cw(),
+      "try_rotate_cw should fail when the active piece is already colliding");
+  require_no_state_change_after_false(
+      engine, before, engine.try_rotate_ccw(),
+      "try_rotate_ccw should fail when the active piece is already colliding");
+  require_no_state_change_after_false(
+      engine, before, engine.try_rotate_180(),
+      "try_rotate_180 should fail when the active piece is already colliding");
+  require_no_state_change_after_lock_result(
+      engine, before, engine.hard_drop(),
+      "hard_drop should no-op when the active piece is already colliding");
+  require_no_state_change_after_lock_result(
+      engine, before, engine.lock_active_piece(),
+      "lock_active_piece should no-op when the active piece is already colliding");
+}
+
+void test_active_piece_actions_noop_when_game_is_over() {
+  using namespace tetris;
+
+  Engine engine(Board(10, 24), std::make_unique<MultiKickRotationSystem>(),
+                make_randomizer());
+  ActivePiece active = spawn_from_piece_type(PieceType::T);
+  active.pos.row = 10;
+  active.pos.col = 4;
+  set_active_piece(engine, active);
+  seed_nontrivial_state(engine);
+  set_active_piece(engine, active);
+  engine._game_over = true;
+
+  EngineSnapshot before = snapshot(engine);
+  require_no_state_change_after_false(
+      engine, before, engine.try_move_left(1),
+      "try_move_left should fail when the game is over");
+  require_no_state_change_after_false(
+      engine, before, engine.try_move_right(1),
+      "try_move_right should fail when the game is over");
+  require_no_state_change_after_false(
+      engine, before, engine.try_soft_drop(1),
+      "try_soft_drop should fail when the game is over");
+  require_no_state_change_after_false(
+      engine, before, engine.try_rotate_cw(),
+      "try_rotate_cw should fail when the game is over");
+  require_no_state_change_after_false(
+      engine, before, engine.try_rotate_ccw(),
+      "try_rotate_ccw should fail when the game is over");
+  require_no_state_change_after_false(
+      engine, before, engine.try_rotate_180(),
+      "try_rotate_180 should fail when the game is over");
+  require_no_state_change_after_lock_result(
+      engine, before, engine.hard_drop(),
+      "hard_drop should no-op when the game is over");
+  require_no_state_change_after_lock_result(
+      engine, before, engine.lock_active_piece(),
+      "lock_active_piece should no-op when the game is over");
 }
 
 void test_try_move_left_supports_partial_and_furthest_movement() {
@@ -702,6 +794,8 @@ void test_hard_drop_locks_without_spawning_next_piece() {
 
 int main() {
   test_try_move_methods_return_false_and_preserve_state_when_no_active_piece();
+  test_active_piece_actions_noop_when_active_piece_is_already_colliding();
+  test_active_piece_actions_noop_when_game_is_over();
   test_try_move_left_supports_partial_and_furthest_movement();
   test_try_move_right_supports_partial_and_furthest_movement();
   test_try_soft_drop_supports_partial_and_furthest_movement();

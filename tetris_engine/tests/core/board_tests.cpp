@@ -101,6 +101,40 @@ void test_board_spawnable_checks_bounds_and_collisions() {
   require(board.collide(top_piece), "piece outside top boundary is invalid");
 }
 
+void test_board_grounded_checks_floor_stack_and_invalid_piece() {
+  using namespace tetris;
+
+  Board board(10, 24);
+
+  ActivePiece airborne = spawn_from_piece_type(PieceType::O);
+  airborne.pos.row = 8;
+  airborne.pos.col = 3;
+  require(!board.grounded(airborne),
+          "airborne piece should not be grounded on an empty board");
+
+  ActivePiece on_floor = spawn_from_piece_type(PieceType::O);
+  on_floor.pos.row = -1;
+  on_floor.pos.col = 3;
+  require(board.grounded(on_floor),
+          "piece resting on the floor should be grounded");
+
+  Board stacked_board(10, 24);
+  stacked_board.set(3, 4, Cell::Garbage);
+  stacked_board.set(3, 5, Cell::Garbage);
+  ActivePiece on_stack = spawn_from_piece_type(PieceType::O);
+  on_stack.pos.row = 3;
+  on_stack.pos.col = 3;
+  require(stacked_board.grounded(on_stack),
+          "piece resting on occupied cells should be grounded");
+
+  ActivePiece colliding = spawn_from_piece_type(PieceType::O);
+  colliding.pos.row = 3;
+  colliding.pos.col = 3;
+  stacked_board.set(4, 4, Cell::Garbage);
+  require(!stacked_board.grounded(colliding),
+          "colliding piece should not be treated as grounded");
+}
+
 void test_clear_lines_handles_none_single_multiple_and_unclearable() {
   using namespace tetris;
 
@@ -213,6 +247,7 @@ int main() {
   test_board_column_and_aggregate_height();
   test_board_render_returns_cell_grid();
   test_board_spawnable_checks_bounds_and_collisions();
+  test_board_grounded_checks_floor_stack_and_invalid_piece();
   test_clear_lines_handles_none_single_multiple_and_unclearable();
   test_clear_lines_resets_touch_max_height();
   test_add_garbage_inserts_rows_and_tracks_top_out();

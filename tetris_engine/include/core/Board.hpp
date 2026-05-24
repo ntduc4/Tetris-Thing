@@ -27,7 +27,11 @@ public:
   uint16_t max_height() const;
   inline bool touch_max_height() const { return _touch_max_height; }
 
-  bool collide(ActivePiece piece) const;
+  // Check if active piece collide with the board or not
+  bool collide(const ActivePiece &piece) const;
+
+  // Check not in collision and cannot move down any further
+  bool grounded(const ActivePiece &piece) const;
 
   void add_garbage(uint16_t freeCol, uint16_t line_count);
 

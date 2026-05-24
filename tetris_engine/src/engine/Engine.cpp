@@ -18,6 +18,9 @@ std::vector<PieceType> Engine::preview_queue() const {
 }
 
 bool Engine::spawn_next_piece(bool clutch_clear) {
+  if (_game_over)
+    return false;
+
   ActivePiece nextPiece = spawn_from_piece_type(
       _randomizer->peek(), _spawn_row_offset, _spawn_col_offset);
 
@@ -45,6 +48,9 @@ bool Engine::spawn_next_piece(bool clutch_clear) {
 }
 
 bool Engine::hold(bool ignore_hold) {
+  if (_game_over)
+    return false;
+
   if (!ignore_hold && !_can_hold)
     return false;
 
@@ -71,43 +77,108 @@ bool Engine::hold(bool ignore_hold) {
   return true;
 }
 
-bool Engine::try_move_left(int16_t) {
-  // TODO: Implement left movement.
-  return false;
+bool Engine::try_move_left(int16_t amount) {
+  if (_game_over || !_active_piece.has_value())
+    return false;
+
+  ActivePiece p = _active_piece.value();
+
+  if (_board.collide(p))
+    return false;
+
+  for (int32_t amt = amount < 0 ? _board.get_width() : amount; amt > 0; amt--) {
+    p.pos.col--;
+    if (_board.collide(p)) {
+      p.pos.col++;
+      if (p.pos.col == _active_piece.value().pos.col)
+        return false;
+      _active_piece.emplace(p);
+      return true;
+    }
+  }
+
+  _active_piece.emplace(p);
+  return true;
 }
 
-bool Engine::try_move_right(int16_t) {
-  // TODO: Implement right movement.
-  return false;
+bool Engine::try_move_right(int16_t amount) {
+  if (_game_over || !_active_piece.has_value())
+    return false;
+
+  ActivePiece p = _active_piece.value();
+
+  if (_board.collide(p))
+    return false;
+
+  for (int32_t amt = amount < 0 ? _board.get_width() : amount; amt > 0; amt--) {
+    p.pos.col++;
+    if (_board.collide(p)) {
+      p.pos.col--;
+      if (p.pos.col == _active_piece.value().pos.col)
+        return false;
+      _active_piece.emplace(p);
+      return true;
+    }
+  }
+
+  _active_piece.emplace(p);
+  return true;
 }
 
-bool Engine::try_soft_drop(int16_t) {
-  // TODO: Implement soft drop.
-  return false;
+bool Engine::try_soft_drop(int16_t amount) {
+  if (_game_over || !_active_piece.has_value())
+    return false;
+
+  ActivePiece p = _active_piece.value();
+
+  if (_board.collide(p))
+    return false;
+
+  for (int32_t amt = amount < 0 ? _board.get_height() : amount; amt > 0;
+       amt--) {
+    p.pos.row--;
+    if (_board.collide(p)) {
+      p.pos.row++;
+      if (p.pos.row == _active_piece.value().pos.row)
+        return false;
+      _active_piece.emplace(p);
+      return true;
+    }
+  }
+
+  _active_piece.emplace(p);
+  return true;
 }
 
 bool Engine::try_rotate_cw() {
   // TODO: Implement clockwise rotation.
+  if (_game_over || !_active_piece.has_value())
+    return false;
   return false;
 }
 
 bool Engine::try_rotate_ccw() {
   // TODO: Implement counterclockwise rotation.
+  if (_game_over || !_active_piece.has_value())
+    return false;
   return false;
 }
 
 bool Engine::try_rotate_180() {
   // TODO: Implement 180-degree rotation.
+  if (_game_over || !_active_piece.has_value())
+    return false;
   return false;
 }
 
 std::optional<ActivePiece> Engine::ghost_piece() const {
   std::optional<ActivePiece> res = _active_piece;
-  if (res.has_value()) {
-    while (res->pos.row > -PieceDimension && !_board.collide(res.value()))
-      res->pos.row--;
-    res->pos.row++;
-  }
+
+  if (!res.has_value() || _board.collide(res.value()))
+    return std::nullopt;
+
+  while (res->pos.row > -PieceDimension && !_board.grounded(res.value()))
+    res->pos.row--;
 
   return res;
 }
@@ -128,14 +199,23 @@ TickResult Engine::tick() {
 }
 
 LockResult Engine::hard_drop() {
-  // TODO: Implement hard drop resolution.
-  return {};
+  if (_game_over || !_active_piece.has_value())
+    return {};
+  try_soft_drop(-1);
+  return lock_active_piece();
 }
 
 LockResult Engine::lock_active_piece() {
   // TODO: Lock the active piece and resolve line clears, update score, check
   // spin, etc...
-  return {};
+  if (_game_over || !_active_piece.has_value())
+    return {};
+
+  ActivePiece p = _active_piece.value();
+
+  // Grounded test, do nothing if not grounded
+  if (!_board.grounded(p))
+    return {};
 }
 
 void Engine::receive_garbage(uint16_t lines, uint16_t hole_col) {

@@ -80,6 +80,26 @@ void test_ghost_piece_stops_on_existing_stack() {
           "ghost_piece should not mutate the active piece");
 }
 
+void test_ghost_piece_returns_nullopt_for_colliding_active_piece() {
+  using namespace tetris;
+
+  Board board(10, 24);
+  board.set(4, 4, Cell::Garbage);
+  Engine engine(board, make_rotation_system(), make_randomizer());
+
+  ActivePiece active = spawn_from_piece_type(PieceType::O);
+  active.pos.row = 3;
+  active.pos.col = 3;
+  engine._active_piece.emplace(active);
+
+  require(!engine.ghost_piece().has_value(),
+          "ghost_piece should return nullopt when the active piece is already "
+          "colliding");
+  require(engine.active_piece()->pos.row == active.pos.row &&
+              engine.active_piece()->pos.col == active.pos.col,
+          "ghost_piece should not mutate a colliding active piece");
+}
+
 void test_ghost_piece_handles_floating_single_hole_layers_for_multiple_shapes() {
   using namespace tetris;
 
@@ -207,6 +227,7 @@ int main() {
   test_ghost_piece_returns_grounded_o_piece_on_empty_board();
   test_ghost_piece_returns_grounded_rotated_t_piece_on_empty_board();
   test_ghost_piece_stops_on_existing_stack();
+  test_ghost_piece_returns_nullopt_for_colliding_active_piece();
   test_ghost_piece_handles_floating_single_hole_layers_for_multiple_shapes();
   return 0;
 }

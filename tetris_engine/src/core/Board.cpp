@@ -64,7 +64,7 @@ uint16_t Board::max_height() const <%
   return 0;
 %>
 
-bool Board::collide(ActivePiece piece) const <%
+bool Board::collide(const ActivePiece &piece) const <%
   std::vector<Offset> piece_shape = piece.piece.current_shape();
   for (Offset offset : piece_shape) <%
     int16_t row = offset.row + piece.pos.row;
@@ -78,6 +78,14 @@ bool Board::collide(ActivePiece piece) const <%
       return true;
   %>
   return false;
+%>
+
+bool Board::grounded(const ActivePiece &piece) const <%
+  if (collide(piece))
+    return false;
+  ActivePiece down = piece;
+  down.pos.row--;
+  return collide(down);
 %>
 
 std::vector<std::vector<Cell>> Board::render() const <%

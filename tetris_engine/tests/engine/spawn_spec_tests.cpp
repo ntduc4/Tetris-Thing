@@ -115,6 +115,29 @@ void test_spawn_next_piece_returns_false_when_clutch_clear_would_require_above_b
           "failed clutch-clear spawn should preserve the current can_hold state");
 }
 
+void test_spawn_next_piece_returns_false_and_preserves_state_when_game_is_over() {
+  using namespace tetris;
+
+  auto randomizer = std::make_unique<TrackingRandomizer>();
+  TrackingRandomizer *randomizer_ptr = randomizer.get();
+  Engine engine(Board(10, 24), make_rotation_system(), std::move(randomizer));
+
+  const PieceType expected_piece = randomizer_ptr->peek();
+  engine._game_over = true;
+  engine._can_hold = false;
+
+  require(!engine.spawn_next_piece(false),
+          "spawn should fail when the game is already over");
+  require(randomizer_ptr->peek() == expected_piece,
+          "game-over spawn should not advance the randomizer");
+  require(randomizer_ptr->pop_count == 0,
+          "game-over spawn should not pop the randomizer");
+  require(!engine.active_piece().has_value(),
+          "game-over spawn should leave the active piece unset");
+  require(!engine.can_hold(),
+          "game-over spawn should preserve can_hold");
+}
+
 } // namespace
 
 int main() {
@@ -122,5 +145,6 @@ int main() {
   test_spawn_next_piece_spawns_and_pops_once_when_spawn_is_open();
   test_spawn_next_piece_clutch_clear_spawns_and_pops_once_when_shifted_spawn_fits();
   test_spawn_next_piece_returns_false_when_clutch_clear_would_require_above_board_spawn();
+  test_spawn_next_piece_returns_false_and_preserves_state_when_game_is_over();
   return 0;
 }

@@ -196,6 +196,29 @@ void test_hold_can_ignore_can_hold_but_still_ends_disabled_after_success() {
           "successful ignored hold should not pop the randomizer for a swap");
 }
 
+void test_hold_returns_false_and_preserves_state_when_game_is_over() {
+  using namespace tetris;
+
+  auto randomizer = std::make_unique<TrackingRandomizer>();
+  TrackingRandomizer *randomizer_ptr = randomizer.get();
+  Engine engine(Board(10, 24), make_rotation_system(), std::move(randomizer));
+
+  engine._active_piece.emplace(spawn_from_piece_type(PieceType::T));
+  engine._hold_piece = PieceType::O;
+  engine._can_hold = true;
+  engine._game_over = true;
+
+  require(!engine.hold(true), "hold should fail when the game is already over");
+  require_active_piece_equals(engine, PieceType::T, DefaultSpawnRowOffset,
+                              DefaultSpawnColOffset,
+                              "game-over hold should preserve the active piece");
+  require(engine.hold_piece().has_value() && engine.hold_piece().value() == PieceType::O,
+          "game-over hold should preserve the held piece");
+  require(engine.can_hold(), "game-over hold should preserve can_hold");
+  require(randomizer_ptr->pop_count == 0,
+          "game-over hold should not pop the randomizer");
+}
+
 } // namespace
 
 int main() {
@@ -206,5 +229,6 @@ int main() {
   test_hold_swaps_with_existing_hold_piece_when_spawnable();
   test_hold_returns_false_when_existing_hold_piece_cannot_spawn();
   test_hold_can_ignore_can_hold_but_still_ends_disabled_after_success();
+  test_hold_returns_false_and_preserves_state_when_game_is_over();
   return 0;
 }
