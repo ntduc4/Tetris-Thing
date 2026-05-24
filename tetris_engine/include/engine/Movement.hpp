@@ -8,6 +8,7 @@ namespace tetris {
 
 /** Fine-grained movement labels used for placement and spin metadata. */
 enum class Movement : uint8_t {
+  None,
   Left,
   Right,
   SoftDrop,
@@ -15,8 +16,7 @@ enum class Movement : uint8_t {
   CW,
   CCW,
   HalfRotation,
-  Gravity,
-  None
+  Gravity
 };
 
 /** Records a final piece placement and the moves that reached it. */

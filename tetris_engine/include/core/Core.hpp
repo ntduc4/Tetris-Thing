@@ -35,16 +35,20 @@ constexpr Rotation DefaultRotation = Rotation::North;
 struct Position {
   int16_t row;
   int16_t col;
+
+  bool operator==(const Position &p) const = default;
 };
 
 /** Local row/column offset from a piece root position. */
 struct Offset {
   int8_t row;
   int8_t col;
+
+  bool operator==(const Offset &p) const = default;
 };
 
 /** High-level player action accepted by the engine. */
-enum class Action {
+enum class Action : uint8_t {
   Left,
   Right,
   SoftDrop,

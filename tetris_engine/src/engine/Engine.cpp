@@ -2,6 +2,7 @@
 #include "core/Core.hpp"
 #include "core/Piece.hpp"
 #include <optional>
+#include <vector>
 
 namespace tetris {
 
@@ -162,7 +163,26 @@ bool Engine::try_rotate_cw() {
   if (_board.collide(p))
     return false;
 
-  return true;
+  Rotation r = p.piece.rotation();
+  p.piece.rotate_cw();
+  if (!_board.collide(p)) {
+
+    _active_piece = p;
+    return true;
+  }
+
+  std::vector offsets =
+      _rotation_system->kick_offsets(p.piece.type(), r, p.piece.rotation());
+  for (Offset o : offsets) {
+    p.pos = {.row = static_cast<int16_t>(_active_piece->pos.row + o.row),
+             .col = static_cast<int16_t>(_active_piece->pos.col + o.col)};
+    if (!_board.collide(p)) {
+      _active_piece = p;
+      return true;
+    }
+  }
+
+  return false;
 }
 
 bool Engine::try_rotate_ccw() {
@@ -174,7 +194,25 @@ bool Engine::try_rotate_ccw() {
   if (_board.collide(p))
     return false;
 
-  return true;
+  Rotation r = p.piece.rotation();
+  p.piece.rotate_ccw();
+  if (!_board.collide(p)) {
+    _active_piece = p;
+    return true;
+  }
+
+  std::vector offsets =
+      _rotation_system->kick_offsets(p.piece.type(), r, p.piece.rotation());
+  for (Offset o : offsets) {
+    p.pos = {.row = static_cast<int16_t>(_active_piece->pos.row + o.row),
+             .col = static_cast<int16_t>(_active_piece->pos.col + o.col)};
+    if (!_board.collide(p)) {
+      _active_piece = p;
+      return true;
+    }
+  }
+
+  return false;
 }
 
 bool Engine::try_rotate_180() {

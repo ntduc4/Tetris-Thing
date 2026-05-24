@@ -22,27 +22,25 @@ public:
 
 class NoRotationSystem : public tetris::RotationSystem {
 public:
-  std::vector<tetris::Offset>
-  kick_offsets(tetris::PieceType, tetris::Rotation,
-               tetris::Rotation) const override {
+  std::vector<tetris::Offset> kick_offsets(tetris::PieceType, tetris::Rotation,
+                                           tetris::Rotation) const override {
     return {};
   }
 };
 
 class InPlaceRotationSystem : public tetris::RotationSystem {
 public:
-  std::vector<tetris::Offset>
-  kick_offsets(tetris::PieceType, tetris::Rotation,
-               tetris::Rotation) const override {
+  std::vector<tetris::Offset> kick_offsets(tetris::PieceType, tetris::Rotation,
+                                           tetris::Rotation) const override {
     return {{.row = 0, .col = 0}};
   }
 };
 
 class MultiKickRotationSystem : public tetris::RotationSystem {
 public:
-  std::vector<tetris::Offset>
-  kick_offsets(tetris::PieceType, tetris::Rotation from,
-               tetris::Rotation to) const override {
+  std::vector<tetris::Offset> kick_offsets(tetris::PieceType,
+                                           tetris::Rotation from,
+                                           tetris::Rotation to) const override {
     if (from == tetris::Rotation::North && to == tetris::Rotation::East)
       return {{0, 0}, {0, -1}, {0, 2}, {-1, 1}};
     if (from == tetris::Rotation::East && to == tetris::Rotation::North)
@@ -55,9 +53,9 @@ public:
 
 class NotchRotationSystem : public tetris::RotationSystem {
 public:
-  std::vector<tetris::Offset>
-  kick_offsets(tetris::PieceType, tetris::Rotation from,
-               tetris::Rotation to) const override {
+  std::vector<tetris::Offset> kick_offsets(tetris::PieceType,
+                                           tetris::Rotation from,
+                                           tetris::Rotation to) const override {
     if (from == tetris::Rotation::North && to == tetris::Rotation::East)
       return {{0, 0}, {-1, 0}, {-1, 1}, {0, 1}};
     if (from == tetris::Rotation::East && to == tetris::Rotation::North)
@@ -114,11 +112,21 @@ bool same_placement(const std::optional<tetris::Placement> &lhs,
          lhs->final_rotation == rhs->final_rotation;
 }
 
+bool same_optional_offset(const std::optional<tetris::Offset> &lhs,
+                          const std::optional<tetris::Offset> &rhs) {
+  if (lhs.has_value() != rhs.has_value())
+    return false;
+  if (!lhs.has_value())
+    return true;
+  return lhs->row == rhs->row && lhs->col == rhs->col;
+}
+
 bool same_spin_context(const tetris::SpinContext &lhs,
                        const tetris::SpinContext &rhs) {
   return lhs.last_movement == rhs.last_movement &&
          same_piece(lhs.previous_piece, rhs.previous_piece) &&
-         lhs.used_kick == rhs.used_kick && lhs.kick_index == rhs.kick_index &&
+         lhs.used_kick == rhs.used_kick &&
+         same_optional_offset(lhs.kick_offset, rhs.kick_offset) &&
          lhs.last_move_was_player_action == rhs.last_move_was_player_action;
 }
 
@@ -146,14 +154,14 @@ void require_spin_context_after_move(const tetris::Engine &engine,
           std::string("spin_context.previous_piece: ") + message);
   require(!engine._spin_context.used_kick,
           std::string("spin_context.used_kick: ") + message);
-  require(!engine._spin_context.kick_index.has_value(),
-          std::string("spin_context.kick_index: ") + message);
+  require(!engine._spin_context.kick_offset.has_value(),
+          std::string("spin_context.kick_offset: ") + message);
 }
 
 void require_spin_context_after_rotation(
     const tetris::Engine &engine, tetris::Movement movement,
     const tetris::ActivePiece &previous_piece, bool used_kick,
-    std::optional<uint8_t> kick_index, const char *message) {
+    std::optional<tetris::Offset> kick_offset, const char *message) {
   require(engine._spin_context.last_movement == movement,
           std::string("spin_context.last_movement: ") + message);
   require(same_piece(engine._spin_context.previous_piece,
@@ -161,11 +169,12 @@ void require_spin_context_after_rotation(
           std::string("spin_context.previous_piece: ") + message);
   require(engine._spin_context.used_kick == used_kick,
           std::string("spin_context.used_kick: ") + message);
-  require(engine._spin_context.kick_index == kick_index,
-          std::string("spin_context.kick_index: ") + message);
+  require(same_optional_offset(engine._spin_context.kick_offset, kick_offset),
+          std::string("spin_context.kick_offset: ") + message);
 }
 
-void set_active_piece(tetris::Engine &engine, const tetris::ActivePiece &piece) {
+void set_active_piece(tetris::Engine &engine,
+                      const tetris::ActivePiece &piece) {
   engine._active_piece.emplace(piece);
 }
 
@@ -228,8 +237,9 @@ void require_no_state_change_after_lock_result(const tetris::Engine &engine,
                                                const EngineSnapshot &before,
                                                const tetris::LockResult &result,
                                                const char *failure_message) {
-  require(!result.game_over && result.lines_cleared == 0 && !result.perfect_clear &&
-              result.spin == tetris::SpinType::None && result.attack_sent == 0,
+  require(!result.game_over && result.lines_cleared == 0 &&
+              !result.perfect_clear && result.spin == tetris::SpinType::None &&
+              result.attack_sent == 0,
           failure_message);
   require(same_snapshot(before, snapshot(engine)),
           "failed lock-style action should not change any engine state");
@@ -253,13 +263,13 @@ void seed_nontrivial_state(tetris::Engine &engine) {
   engine._spin_context.previous_piece.emplace(
       tetris::spawn_from_piece_type(tetris::PieceType::I));
   engine._spin_context.used_kick = true;
-  engine._spin_context.kick_index = 1;
+  engine._spin_context.kick_offset = tetris::Offset{.row = 1, .col = -1};
   engine._spin_context.last_move_was_player_action = true;
-  engine._last_successful_placement = tetris::Placement{
-      .moves = {tetris::Movement::Left, tetris::Movement::CW},
-      .type = tetris::PieceType::T,
-      .final_pos = tetris::Position{.row = 5, .col = 4},
-      .final_rotation = tetris::Rotation::East};
+  engine._last_successful_placement =
+      tetris::Placement{.moves = {tetris::Movement::Left, tetris::Movement::CW},
+                        .type = tetris::PieceType::T,
+                        .final_pos = tetris::Position{.row = 5, .col = 4},
+                        .final_rotation = tetris::Rotation::East};
   engine._pending_garbage.push_back(
       {.event = tetris::GarbageEvent{.lines = 2, .hole_col = 4},
        .delay_ticks = 6});
@@ -273,18 +283,24 @@ void test_try_move_methods_return_false_and_preserve_state_when_no_active_piece(
   seed_nontrivial_state(engine);
 
   EngineSnapshot before = snapshot(engine);
-  require_no_state_change_after_false(engine, before, engine.try_move_left(3),
-                                      "try_move_left should fail without an active piece");
-  require_no_state_change_after_false(engine, before, engine.try_move_right(3),
-                                      "try_move_right should fail without an active piece");
-  require_no_state_change_after_false(engine, before, engine.try_soft_drop(3),
-                                      "try_soft_drop should fail without an active piece");
-  require_no_state_change_after_false(engine, before, engine.try_rotate_cw(),
-                                      "try_rotate_cw should fail without an active piece");
-  require_no_state_change_after_false(engine, before, engine.try_rotate_ccw(),
-                                      "try_rotate_ccw should fail without an active piece");
-  require_no_state_change_after_false(engine, before, engine.try_rotate_180(),
-                                      "try_rotate_180 should fail without an active piece");
+  require_no_state_change_after_false(
+      engine, before, engine.try_move_left(3),
+      "try_move_left should fail without an active piece");
+  require_no_state_change_after_false(
+      engine, before, engine.try_move_right(3),
+      "try_move_right should fail without an active piece");
+  require_no_state_change_after_false(
+      engine, before, engine.try_soft_drop(3),
+      "try_soft_drop should fail without an active piece");
+  require_no_state_change_after_false(
+      engine, before, engine.try_rotate_cw(),
+      "try_rotate_cw should fail without an active piece");
+  require_no_state_change_after_false(
+      engine, before, engine.try_rotate_ccw(),
+      "try_rotate_ccw should fail without an active piece");
+  require_no_state_change_after_false(
+      engine, before, engine.try_rotate_180(),
+      "try_rotate_180 should fail without an active piece");
 }
 
 void test_active_piece_actions_noop_when_active_piece_is_already_colliding() {
@@ -325,7 +341,8 @@ void test_active_piece_actions_noop_when_active_piece_is_already_colliding() {
       "hard_drop should no-op when the active piece is already colliding");
   require_no_state_change_after_lock_result(
       engine, before, engine.lock_active_piece(),
-      "lock_active_piece should no-op when the active piece is already colliding");
+      "lock_active_piece should no-op when the active piece is already "
+      "colliding");
 }
 
 void test_active_piece_actions_noop_when_game_is_over() {
@@ -378,8 +395,9 @@ void test_try_move_left_supports_partial_and_furthest_movement() {
     active.pos.col = 5;
     set_active_piece(engine, active);
 
-    require(engine.try_move_left(-1),
-            "negative left amount should move to the furthest reachable column");
+    require(
+        engine.try_move_left(-1),
+        "negative left amount should move to the furthest reachable column");
     require(engine.active_piece()->pos.col == -1,
             "negative left amount should move the piece to the left wall");
     require_spin_context_after_move(engine, Movement::Left, active,
@@ -395,12 +413,14 @@ void test_try_move_left_supports_partial_and_furthest_movement() {
     active.pos.col = 5;
     set_active_piece(engine, active);
 
-    require(engine.try_move_left(5),
-            "left movement should return true when the piece can move partially");
+    require(
+        engine.try_move_left(5),
+        "left movement should return true when the piece can move partially");
     require(engine.active_piece()->pos.col == 3,
             "left movement should stop at the last collision-free column");
-    require_spin_context_after_move(engine, Movement::Left, active,
-                                    "partial left movement should update spin context");
+    require_spin_context_after_move(
+        engine, Movement::Left, active,
+        "partial left movement should update spin context");
   }
 
   {
@@ -415,8 +435,9 @@ void test_try_move_left_supports_partial_and_furthest_movement() {
     set_active_piece(engine, active);
     EngineSnapshot before = snapshot(engine);
 
-    require_no_state_change_after_false(engine, before, engine.try_move_left(1),
-                                        "left movement should fail when blocked immediately");
+    require_no_state_change_after_false(
+        engine, before, engine.try_move_left(1),
+        "left movement should fail when blocked immediately");
   }
 }
 
@@ -430,12 +451,14 @@ void test_try_move_right_supports_partial_and_furthest_movement() {
     active.pos.col = 1;
     set_active_piece(engine, active);
 
-    require(engine.try_move_right(-1),
-            "negative right amount should move to the furthest reachable column");
+    require(
+        engine.try_move_right(-1),
+        "negative right amount should move to the furthest reachable column");
     require(engine.active_piece()->pos.col == 7,
             "negative right amount should move the piece to the right wall");
-    require_spin_context_after_move(engine, Movement::Right, active,
-                                    "right movement should update spin context");
+    require_spin_context_after_move(
+        engine, Movement::Right, active,
+        "right movement should update spin context");
   }
 
   {
@@ -447,12 +470,14 @@ void test_try_move_right_supports_partial_and_furthest_movement() {
     active.pos.col = 3;
     set_active_piece(engine, active);
 
-    require(engine.try_move_right(5),
-            "right movement should return true when the piece can move partially");
+    require(
+        engine.try_move_right(5),
+        "right movement should return true when the piece can move partially");
     require(engine.active_piece()->pos.col == 5,
             "right movement should stop at the last collision-free column");
-    require_spin_context_after_move(engine, Movement::Right, active,
-                                    "partial right movement should update spin context");
+    require_spin_context_after_move(
+        engine, Movement::Right, active,
+        "partial right movement should update spin context");
   }
 
   {
@@ -467,8 +492,9 @@ void test_try_move_right_supports_partial_and_furthest_movement() {
     set_active_piece(engine, active);
     EngineSnapshot before = snapshot(engine);
 
-    require_no_state_change_after_false(engine, before, engine.try_move_right(1),
-                                        "right movement should fail when blocked immediately");
+    require_no_state_change_after_false(
+        engine, before, engine.try_move_right(1),
+        "right movement should fail when blocked immediately");
   }
 }
 
@@ -500,11 +526,13 @@ void test_try_soft_drop_supports_partial_and_furthest_movement() {
     set_active_piece(engine, active);
 
     require(engine.try_soft_drop(20),
-            "soft drop should return true when the piece can move part of the requested amount");
+            "soft drop should return true when the piece can move part of the "
+            "requested amount");
     require(engine.active_piece()->pos.row == 3,
             "soft drop should stop at the last collision-free row");
-    require_spin_context_after_move(engine, Movement::SoftDrop, active,
-                                    "partial soft drop should update spin context");
+    require_spin_context_after_move(
+        engine, Movement::SoftDrop, active,
+        "partial soft drop should update spin context");
   }
 
   {
@@ -519,8 +547,9 @@ void test_try_soft_drop_supports_partial_and_furthest_movement() {
     set_active_piece(engine, active);
     EngineSnapshot before = snapshot(engine);
 
-    require_no_state_change_after_false(engine, before, engine.try_soft_drop(1),
-                                        "soft drop should fail when blocked immediately");
+    require_no_state_change_after_false(
+        engine, before, engine.try_soft_drop(1),
+        "soft drop should fail when blocked immediately");
   }
 }
 
@@ -535,15 +564,16 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
     active.pos.col = 4;
     set_active_piece(engine, active);
 
-    require(engine.try_rotate_cw(),
-            "clockwise rotation should succeed in open space with an in-place rotation system");
+    require(engine.try_rotate_cw(), "clockwise rotation should succeed in open "
+                                    "space with an in-place rotation system");
     require(engine.active_piece()->piece.rotation() == Rotation::East,
             "clockwise rotation should update the active piece rotation");
-    require(engine.active_piece()->pos.col == 4,
-            "in-place rotation should not move the piece when no kick is needed");
-    require_spin_context_after_rotation(engine, Movement::CW, active, false,
-                                        std::nullopt,
-                                        "clockwise rotation should update spin context");
+    require(
+        engine.active_piece()->pos.col == 4,
+        "in-place rotation should not move the piece when no kick is needed");
+    require_spin_context_after_rotation(
+        engine, Movement::CW, active, false, std::nullopt,
+        "clockwise rotation should update spin context");
   }
 
   {
@@ -557,11 +587,12 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
 
     require(engine.try_rotate_ccw(),
             "counterclockwise rotation should succeed in open space");
-    require(engine.active_piece()->piece.rotation() == Rotation::North,
-            "counterclockwise rotation should update the active piece rotation");
-    require_spin_context_after_rotation(engine, Movement::CCW, active, false,
-                                        std::nullopt,
-                                        "counterclockwise rotation should update spin context");
+    require(
+        engine.active_piece()->piece.rotation() == Rotation::North,
+        "counterclockwise rotation should update the active piece rotation");
+    require_spin_context_after_rotation(
+        engine, Movement::CCW, active, false, std::nullopt,
+        "counterclockwise rotation should update spin context");
   }
 
   {
@@ -576,16 +607,17 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
             "180 rotation should succeed in open space");
     require(engine.active_piece()->piece.rotation() == Rotation::South,
             "180 rotation should update the active piece rotation");
-    require_spin_context_after_rotation(engine, Movement::HalfRotation, active,
-                                        false, std::nullopt,
-                                        "180 rotation should update spin context");
+    require_spin_context_after_rotation(
+        engine, Movement::HalfRotation, active, false, std::nullopt,
+        "180 rotation should update spin context");
   }
 
   {
     Board board(10, 24);
     board.set(11, 4, Cell::Garbage);
     board.set(11, 5, Cell::Garbage);
-    Engine engine(board, std::make_unique<NoRotationSystem>(), make_randomizer());
+    Engine engine(board, std::make_unique<NoRotationSystem>(),
+                  make_randomizer());
     ActivePiece active = spawn_from_piece_type(PieceType::T);
     active.pos.row = 10;
     active.pos.col = 4;
@@ -594,8 +626,9 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
     set_active_piece(engine, active);
     EngineSnapshot before = snapshot(engine);
 
-    require_no_state_change_after_false(engine, before, engine.try_rotate_cw(),
-                                        "rotation should fail and preserve state when no rotation path exists");
+    require_no_state_change_after_false(
+        engine, before, engine.try_rotate_cw(),
+        "rotation should fail and preserve state when no rotation path exists");
   }
 
   {
@@ -609,14 +642,16 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
     active.pos.col = 4;
     set_active_piece(engine, active);
 
-    require(engine.try_rotate_cw(),
-            "rotation should succeed when the rotation system finds a later valid kick");
+    require(engine.try_rotate_cw(), "rotation should succeed when the rotation "
+                                    "system finds a later valid kick");
     require(engine.active_piece()->piece.rotation() == Rotation::East,
             "kicked rotation should update the active piece rotation");
     require(engine.active_piece()->pos.col == 6,
             "kicked rotation should apply the successful multi-kick offset");
-    require_spin_context_after_rotation(engine, Movement::CW, active, true, 2,
-                                        "kicked rotation should update spin context");
+    require_spin_context_after_rotation(
+        engine, Movement::CW, active, true,
+        tetris::Offset{.row = 0, .col = 2},
+        "kicked rotation should update spin context");
   }
 
   {
@@ -635,8 +670,10 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
     set_active_piece(engine, active);
     EngineSnapshot before = snapshot(engine);
 
-    require_no_state_change_after_false(engine, before, engine.try_rotate_cw(),
-                                        "rotation should fail and preserve state when all kick options are blocked");
+    require_no_state_change_after_false(
+        engine, before, engine.try_rotate_cw(),
+        "rotation should fail and preserve state when all kick options are "
+        "blocked");
   }
 
   {
@@ -649,15 +686,18 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
     active.pos.col = 4;
     set_active_piece(engine, active);
 
-    require(engine.try_rotate_cw(),
-            "rotation should succeed when a notch-style upward kick is required");
+    require(
+        engine.try_rotate_cw(),
+        "rotation should succeed when a notch-style upward kick is required");
     require(engine.active_piece()->piece.rotation() == Rotation::East,
             "notch rotation should update the active piece rotation");
     require(engine.active_piece()->pos.row == 9 &&
                 engine.active_piece()->pos.col == 5,
             "notch rotation should use the upward-right kick path");
-    require_spin_context_after_rotation(engine, Movement::CW, active, true, 2,
-                                        "notch rotation should update spin context");
+    require_spin_context_after_rotation(
+        engine, Movement::CW, active, true,
+        tetris::Offset{.row = -1, .col = 1},
+        "notch rotation should update spin context");
   }
 
   {
@@ -676,7 +716,8 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
 
     require_no_state_change_after_false(
         engine, before, engine.try_rotate_cw(),
-        "notch-style rotation should fail and preserve state when every kick path is blocked");
+        "notch-style rotation should fail and preserve state when every kick "
+        "path is blocked");
   }
 }
 
@@ -696,9 +737,12 @@ void test_hard_drop_locks_without_spawning_next_piece() {
 
   require(randomizer_ptr->pop_count == 0,
           "hard drop should not spawn or consume the next queue piece");
-  require(engine.board().get(0, 4) == Cell::O && engine.board().get(1, 4) == Cell::O &&
-              engine.board().get(0, 5) == Cell::O && engine.board().get(1, 5) == Cell::O,
-          "hard drop should lock the active piece at its lowest reachable position");
+  require(engine.board().get(0, 4) == Cell::O &&
+              engine.board().get(1, 4) == Cell::O &&
+              engine.board().get(0, 5) == Cell::O &&
+              engine.board().get(1, 5) == Cell::O,
+          "hard drop should lock the active piece at its lowest reachable "
+          "position");
 }
 
 } // namespace

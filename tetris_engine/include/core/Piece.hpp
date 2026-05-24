@@ -55,6 +55,8 @@ public:
                                       static_cast<uint8_t>(Rotation::Count));
   }
 
+  bool operator==(const Piece &p) const = default;
+
 private:
   Rotation _rotation;
   PieceType _type;
@@ -65,6 +67,8 @@ private:
 struct ActivePiece {
   Piece piece;
   Position pos;
+
+  bool operator==(const ActivePiece &p) const = default;
 };
 
 /**
