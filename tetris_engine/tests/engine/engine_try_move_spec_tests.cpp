@@ -124,7 +124,6 @@ bool same_optional_offset(const std::optional<tetris::Offset> &lhs,
 bool same_spin_context(const tetris::SpinContext &lhs,
                        const tetris::SpinContext &rhs) {
   return lhs.last_movement == rhs.last_movement &&
-         same_piece(lhs.previous_piece, rhs.previous_piece) &&
          lhs.used_kick == rhs.used_kick &&
          same_optional_offset(lhs.kick_offset, rhs.kick_offset) &&
          lhs.last_move_was_player_action == rhs.last_move_was_player_action;
@@ -149,9 +148,6 @@ void require_spin_context_after_move(const tetris::Engine &engine,
                                      const char *message) {
   require(engine._spin_context.last_movement == movement,
           std::string("spin_context.last_movement: ") + message);
-  require(same_piece(engine._spin_context.previous_piece,
-                     std::optional<tetris::ActivePiece>(previous_piece)),
-          std::string("spin_context.previous_piece: ") + message);
   require(!engine._spin_context.used_kick,
           std::string("spin_context.used_kick: ") + message);
   require(!engine._spin_context.kick_offset.has_value(),
@@ -164,9 +160,6 @@ void require_spin_context_after_rotation(
     std::optional<tetris::Offset> kick_offset, const char *message) {
   require(engine._spin_context.last_movement == movement,
           std::string("spin_context.last_movement: ") + message);
-  require(same_piece(engine._spin_context.previous_piece,
-                     std::optional<tetris::ActivePiece>(previous_piece)),
-          std::string("spin_context.previous_piece: ") + message);
   require(engine._spin_context.used_kick == used_kick,
           std::string("spin_context.used_kick: ") + message);
   require(same_optional_offset(engine._spin_context.kick_offset, kick_offset),
@@ -260,8 +253,6 @@ void seed_nontrivial_state(tetris::Engine &engine) {
   engine._lock_resets_used = 1;
   engine._last_tick_was_player_action = true;
   engine._spin_context.last_movement = tetris::Movement::Left;
-  engine._spin_context.previous_piece.emplace(
-      tetris::spawn_from_piece_type(tetris::PieceType::I));
   engine._spin_context.used_kick = true;
   engine._spin_context.kick_offset = tetris::Offset{.row = 1, .col = -1};
   engine._spin_context.last_move_was_player_action = true;
@@ -649,8 +640,7 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
     require(engine.active_piece()->pos.col == 6,
             "kicked rotation should apply the successful multi-kick offset");
     require_spin_context_after_rotation(
-        engine, Movement::CW, active, true,
-        tetris::Offset{.row = 0, .col = 2},
+        engine, Movement::CW, active, true, tetris::Offset{.row = 0, .col = 2},
         "kicked rotation should update spin context");
   }
 
@@ -695,8 +685,7 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
                 engine.active_piece()->pos.col == 5,
             "notch rotation should use the upward-right kick path");
     require_spin_context_after_rotation(
-        engine, Movement::CW, active, true,
-        tetris::Offset{.row = -1, .col = 1},
+        engine, Movement::CW, active, true, tetris::Offset{.row = -1, .col = 1},
         "notch rotation should update spin context");
   }
 

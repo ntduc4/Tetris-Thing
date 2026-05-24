@@ -16,8 +16,6 @@ enum class SpinType { None, Mini, Full };
 struct SpinContext {
   /** Final board state should be passed separately as an immutable view. */
   Movement last_movement = Movement::None;
-  /** Piece state before the last successful movement. */
-  std::optional<ActivePiece> previous_piece = std::nullopt;
   /** Whether the last successful rotation required a kick. */
   bool used_kick = false;
   /** Which kick test succeeded, when applicable. */
