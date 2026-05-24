@@ -16,13 +16,8 @@ enum class SpinType { None, Mini, Full };
 struct SpinContext {
   /** Final board state should be passed separately as an immutable view. */
   Movement last_movement = Movement::None;
-  /** Whether the last successful rotation required a kick. */
-  bool used_kick = false;
   /** Which kick test succeeded, when applicable. */
   std::optional<Offset> kick_offset = std::nullopt;
-  /** Whether the current lock was reached by player input or passive gravity.
-   */
-  bool last_move_was_player_action = false;
 };
 
 /** Interface for classifying spin moves at lock time. */

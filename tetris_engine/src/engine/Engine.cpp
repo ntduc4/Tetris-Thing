@@ -1,6 +1,8 @@
 #include "engine/Engine.hpp"
 #include "core/Core.hpp"
 #include "core/Piece.hpp"
+#include "engine/Movement.hpp"
+#include "engine/Spin.hpp"
 #include <optional>
 #include <vector>
 
@@ -97,11 +99,15 @@ bool Engine::try_move_left(int16_t amount) {
       if (p.pos.col == _active_piece.value().pos.col)
         return false;
       _active_piece = p;
+      _spin_context.kick_offset = std::nullopt;
+      _spin_context.last_movement = Movement::Left;
       return true;
     }
   }
 
   _active_piece = p;
+  _spin_context.kick_offset = std::nullopt;
+  _spin_context.last_movement = Movement::Left;
   return true;
 }
 
@@ -121,11 +127,15 @@ bool Engine::try_move_right(int16_t amount) {
       if (p.pos.col == _active_piece.value().pos.col)
         return false;
       _active_piece = p;
+      _spin_context.kick_offset = std::nullopt;
+      _spin_context.last_movement = Movement::Right;
       return true;
     }
   }
 
   _active_piece = p;
+  _spin_context.kick_offset = std::nullopt;
+  _spin_context.last_movement = Movement::Right;
   return true;
 }
 
@@ -146,11 +156,15 @@ bool Engine::try_soft_drop(int16_t amount) {
       if (p.pos.row == _active_piece.value().pos.row)
         return false;
       _active_piece = p;
+      _spin_context.kick_offset = std::nullopt;
+      _spin_context.last_movement = Movement::SoftDrop;
       return true;
     }
   }
 
   _active_piece = p;
+  _spin_context.kick_offset = std::nullopt;
+  _spin_context.last_movement = Movement::SoftDrop;
   return true;
 }
 
@@ -166,8 +180,9 @@ bool Engine::try_rotate_cw() {
   Rotation r = p.piece.rotation();
   p.piece.rotate_cw();
   if (!_board.collide(p)) {
-
     _active_piece = p;
+    _spin_context.kick_offset = std::nullopt;
+    _spin_context.last_movement = Movement::CW;
     return true;
   }
 
@@ -178,6 +193,8 @@ bool Engine::try_rotate_cw() {
              .col = static_cast<int16_t>(_active_piece->pos.col + o.col)};
     if (!_board.collide(p)) {
       _active_piece = p;
+      _spin_context.kick_offset = o;
+      _spin_context.last_movement = Movement::CW;
       return true;
     }
   }
@@ -198,6 +215,8 @@ bool Engine::try_rotate_ccw() {
   p.piece.rotate_ccw();
   if (!_board.collide(p)) {
     _active_piece = p;
+    _spin_context.kick_offset = std::nullopt;
+    _spin_context.last_movement = Movement::CCW;
     return true;
   }
 
@@ -208,6 +227,8 @@ bool Engine::try_rotate_ccw() {
              .col = static_cast<int16_t>(_active_piece->pos.col + o.col)};
     if (!_board.collide(p)) {
       _active_piece = p;
+      _spin_context.kick_offset = o;
+      _spin_context.last_movement = Movement::CCW;
       return true;
     }
   }
@@ -224,7 +245,29 @@ bool Engine::try_rotate_180() {
   if (_board.collide(p))
     return false;
 
-  return true;
+  Rotation r = p.piece.rotation();
+  p.piece.rotate_180();
+  if (!_board.collide(p)) {
+    _active_piece = p;
+    _spin_context.kick_offset = std::nullopt;
+    _spin_context.last_movement = Movement::HalfRotation;
+    return true;
+  }
+
+  std::vector offsets =
+      _rotation_system->kick_offsets(p.piece.type(), r, p.piece.rotation());
+  for (Offset o : offsets) {
+    p.pos = {.row = static_cast<int16_t>(_active_piece->pos.row + o.row),
+             .col = static_cast<int16_t>(_active_piece->pos.col + o.col)};
+    if (!_board.collide(p)) {
+      _active_piece = p;
+      _spin_context.kick_offset = o;
+      _spin_context.last_movement = Movement::HalfRotation;
+      return true;
+    }
+  }
+
+  return false;
 }
 
 std::optional<ActivePiece> Engine::ghost_piece() const {
@@ -272,6 +315,17 @@ LockResult Engine::lock_active_piece() {
   // Grounded test, do nothing if not grounded
   if (!_board.grounded(p))
     return {};
+  for (Offset o : p.piece.current_shape())
+    _board.set(o.row + p.pos.row, o.col + p.pos.col, p.piece.cell_type());
+
+  _active_piece = std::nullopt;
+  uint16_t lc = _board.clear_lines();
+
+  return {.game_over = false,
+          .lines_cleared = lc,
+          .perfect_clear = false,
+          .spin = SpinType::None,
+          .attack_sent = 0};
 }
 
 void Engine::receive_garbage(uint16_t lines, uint16_t hole_col) {

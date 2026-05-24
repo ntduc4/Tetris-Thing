@@ -39,12 +39,8 @@ void require_spin_context_cleared(const tetris::Engine &engine,
                                   const char *message) {
   require(engine._spin_context.last_movement == tetris::Movement::None,
           std::string("spin_context.last_movement: ") + message);
-  require(!engine._spin_context.used_kick,
-          std::string("spin_context.used_kick: ") + message);
   require(!engine._spin_context.kick_offset.has_value(),
           std::string("spin_context.kick_offset: ") + message);
-  require(!engine._spin_context.last_move_was_player_action,
-          std::string("spin_context.last_move_was_player_action: ") + message);
 }
 
 void test_hold_returns_false_when_hold_is_disallowed_and_ignore_hold_is_false() {
@@ -81,9 +77,7 @@ void test_hold_returns_false_when_active_piece_is_missing() {
   engine._active_piece.reset();
   engine._can_hold = true;
   engine._spin_context.last_movement = Movement::CW;
-  engine._spin_context.used_kick = true;
   engine._spin_context.kick_offset = Offset{.row = 1, .col = -1};
-  engine._spin_context.last_move_was_player_action = true;
 
   require(!engine.hold(true), "hold should fail when there is no active piece "
                               "even if ignore_hold is true");
@@ -99,17 +93,11 @@ void test_hold_returns_false_when_active_piece_is_missing() {
   require(engine._spin_context.last_movement == Movement::CW,
           "spin_context.last_movement: failed hold without an active piece "
           "should preserve spin context");
-  require(engine._spin_context.used_kick,
-          "spin_context.used_kick: failed hold without an active piece should "
-          "preserve spin context");
   require(
       same_optional_offset(engine._spin_context.kick_offset,
                            Offset{.row = 1, .col = -1}),
       "spin_context.kick_offset: failed hold without an active piece should "
       "preserve spin context");
-  require(engine._spin_context.last_move_was_player_action,
-          "spin_context.last_move_was_player_action: failed hold without an "
-          "active piece should preserve spin context");
 }
 
 void test_hold_returns_false_when_active_piece_is_missing_even_with_existing_hold_piece() {
@@ -123,9 +111,7 @@ void test_hold_returns_false_when_active_piece_is_missing_even_with_existing_hol
   engine._hold_piece = PieceType::O;
   engine._can_hold = true;
   engine._spin_context.last_movement = Movement::CW;
-  engine._spin_context.used_kick = true;
   engine._spin_context.kick_offset = Offset{.row = 1, .col = -1};
-  engine._spin_context.last_move_was_player_action = true;
 
   require(!engine.hold(true),
           "hold should fail when there is no active piece even if a hold piece "
@@ -145,17 +131,11 @@ void test_hold_returns_false_when_active_piece_is_missing_even_with_existing_hol
   require(engine._spin_context.last_movement == Movement::CW,
           "spin_context.last_movement: failed hold without an active piece "
           "should preserve spin context when a hold piece exists");
-  require(engine._spin_context.used_kick,
-          "spin_context.used_kick: failed hold without an active piece should "
-          "preserve spin context when a hold piece exists");
   require(
       same_optional_offset(engine._spin_context.kick_offset,
                            Offset{.row = 1, .col = -1}),
       "spin_context.kick_offset: failed hold without an active piece should "
       "preserve spin context when a hold piece exists");
-  require(engine._spin_context.last_move_was_player_action,
-          "spin_context.last_move_was_player_action: failed hold without an "
-          "active piece should preserve spin context when a hold piece exists");
 }
 
 void test_hold_with_empty_hold_spawns_next_queue_piece_and_stores_previous_active_piece() {
@@ -331,9 +311,7 @@ void test_hold_clears_spin_context_when_swapping_into_grounded_immobile_piece() 
   engine._hold_piece = PieceType::I;
   engine._can_hold = true;
   engine._spin_context.last_movement = Movement::CW;
-  engine._spin_context.used_kick = true;
   engine._spin_context.kick_offset = Offset{.row = 1, .col = -1};
-  engine._spin_context.last_move_was_player_action = true;
 
   require(engine.hold(false),
           "hold should succeed when swapping into a valid grounded piece");
