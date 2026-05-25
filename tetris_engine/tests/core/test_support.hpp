@@ -14,10 +14,10 @@ inline void require(bool condition, std::string_view message) {
   }
 }
 
-inline int count_cells(
-    const std::array<std::array<tetris::Cell, tetris::PieceDimension>,
-                     tetris::PieceDimension> &rendered,
-    tetris::Cell cell) {
+inline int
+count_cells(const std::array<std::array<tetris::Cell, tetris::PieceDimension>,
+                             tetris::PieceDimension> &rendered,
+            tetris::Cell cell) {
   int count = 0;
   for (const auto &row : rendered)
     for (tetris::Cell current : row)

@@ -293,7 +293,7 @@ uint16_t Engine::hard_drop_distance() const {
   uint16_t res = 0;
   for (; !_board.grounded(p) && res <= _board.get_height() + PieceDimension;
        res++)
-    ;
+    p.pos.row--;
 
   return res;
 }
