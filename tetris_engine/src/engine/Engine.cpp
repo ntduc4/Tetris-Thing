@@ -283,8 +283,19 @@ std::optional<ActivePiece> Engine::ghost_piece() const {
 }
 
 uint16_t Engine::hard_drop_distance() const {
-  // TODO: Compute the hard drop distance.
-  return 0;
+  if (!_active_piece.has_value())
+    return 0;
+
+  ActivePiece p = _active_piece.value();
+
+  if (_board.collide(p))
+    return 0;
+  uint16_t res = 0;
+  for (; !_board.grounded(p) && res <= _board.get_height() + PieceDimension;
+       res++)
+    ;
+
+  return res;
 }
 
 StepResult Engine::step(Action) {
