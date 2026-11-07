@@ -1,6 +1,5 @@
 #pragma once
 
-#include "core/Board.hpp"
 #include "core/Core.hpp"
 #include "core/Piece.hpp"
 
@@ -22,14 +21,16 @@ public:
 /** Standard rotation system with wall-kick support. */
 class SRS : public RotationSystem {
 public:
-  std::vector<Offset> kick_offsets(PieceType, Rotation, Rotation) const override {
+  std::vector<Offset> kick_offsets(PieceType, Rotation,
+                                   Rotation) const override {
     return {};
   }
 };
 /** Rotation system that rejects all rotations. */
 class None : public RotationSystem {
 public:
-  std::vector<Offset> kick_offsets(PieceType, Rotation, Rotation) const override {
+  std::vector<Offset> kick_offsets(PieceType, Rotation,
+                                   Rotation) const override {
     return {};
   }
 };

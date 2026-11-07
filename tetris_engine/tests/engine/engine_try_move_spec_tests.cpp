@@ -7,6 +7,7 @@
 #include <deque>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -701,6 +702,108 @@ void test_try_rotate_methods_cover_in_place_kick_and_failure_cases() {
   }
 }
 
+tetris::Engine make_engine_with_gravity(tetris::Board board, double gravity,
+                                        double gravity_increase = 0.0,
+                                        uint64_t gravity_margin_time =
+                                            tetris::DefaultGravityMarginTime) {
+  return tetris::Engine(std::move(board), make_rotation_system(),
+                        make_randomizer(), nullptr, nullptr, nullptr,
+                        tetris::DefaultQueueLength,
+                        tetris::DefaultSpawnColOffset, 10, gravity,
+                        gravity_increase, gravity_margin_time);
+}
+
+void test_tick_does_not_move_without_gravity() {
+  tetris::Engine engine = make_engine_with_gravity(tetris::Board(10, 24), 0.0);
+  require(engine.spawn_next_piece(), "tick fixture should spawn a piece");
+
+  const tetris::TickResult result = engine.tick();
+  require(!result.moved_down, "zero gravity tick should not report movement");
+  require(!result.locked && !result.game_over,
+          "zero gravity tick should not lock or end the game");
+  require(engine.active_piece().has_value() &&
+              engine.active_piece()->pos.row == 10,
+          "zero gravity tick should leave the active piece in place");
+}
+
+void test_tick_accumulates_fractional_gravity() {
+  tetris::Engine engine = make_engine_with_gravity(tetris::Board(10, 24), 0.25);
+  require(engine.spawn_next_piece(), "tick fixture should spawn a piece");
+
+  for (int tick = 1; tick <= 3; ++tick) {
+    const tetris::TickResult result = engine.tick();
+    require(!result.moved_down && !result.locked && !result.game_over,
+            "sub-cell gravity should not report movement or a lock");
+    require(engine.active_piece().has_value() &&
+                engine.active_piece()->pos.row == 10,
+            "sub-cell gravity should not move the active piece yet");
+  }
+
+  const tetris::TickResult fourth = engine.tick();
+  require(fourth.moved_down && !fourth.locked && !fourth.game_over,
+          "four quarter-gravity ticks should report one cell of falling");
+  require(engine.active_piece().has_value() &&
+              engine.active_piece()->pos.row == 9,
+          "four quarter-gravity ticks should move the active piece one row");
+
+  const tetris::TickResult fifth = engine.tick();
+  require(!fifth.moved_down && engine.active_piece().has_value() &&
+              engine.active_piece()->pos.row == 9,
+          "gravity spent on the fourth tick should not be applied again");
+}
+
+void test_tick_applies_multi_cell_gravity_and_keeps_remainder() {
+  tetris::Engine engine = make_engine_with_gravity(tetris::Board(10, 24), 2.5);
+  require(engine.spawn_next_piece(), "tick fixture should spawn a piece");
+
+  const tetris::TickResult first = engine.tick();
+  require(first.moved_down && !first.locked && !first.game_over,
+          "high-gravity tick should report a fall without locking");
+  require(engine.active_piece().has_value() &&
+              engine.active_piece()->pos.row == 8,
+          "2.5 gravity should move two rows on the first tick");
+
+  const tetris::TickResult second = engine.tick();
+  require(second.moved_down && !second.locked && !second.game_over,
+          "subsequent high-gravity tick should report a fall");
+  require(engine.active_piece().has_value() &&
+              engine.active_piece()->pos.row == 5,
+          "unused half-cell gravity should carry into the next tick");
+}
+
+void test_tick_stops_gravity_at_a_blocker() {
+  tetris::Board board(10, 24);
+  board.set(3, tetris::DefaultSpawnColOffset, tetris::Cell::Garbage);
+  tetris::Engine engine = make_engine_with_gravity(board, 12.0);
+  require(engine.spawn_next_piece(), "tick fixture should spawn a piece");
+
+  const tetris::TickResult result = engine.tick();
+  require(result.moved_down && !result.locked && !result.game_over,
+          "gravity should report a partial fall without immediately locking");
+  require(engine.active_piece().has_value() &&
+              engine.active_piece()->pos.row == 2,
+          "gravity should stop at the last non-colliding row");
+  require(engine.board().grounded(engine.active_piece().value()),
+          "the active piece should be grounded above the blocker");
+  require(engine.board().get(3, tetris::DefaultSpawnColOffset) ==
+              tetris::Cell::Garbage,
+          "gravity should not change the board before locking");
+}
+
+void test_tick_increases_gravity_after_margin_time() {
+  tetris::Engine engine =
+      make_engine_with_gravity(tetris::Board(10, 24), 0.0, 0.25, 2);
+  require(engine.spawn_next_piece(), "tick fixture should spawn a piece");
+
+  bool fell = false;
+  for (int tick = 0; tick < 8; ++tick)
+    fell = engine.tick().moved_down || fell;
+
+  require(fell && engine.active_piece().has_value() &&
+              engine.active_piece()->pos.row < 10,
+          "gravity increase should eventually move the piece after the margin");
+}
+
 void test_hard_drop_locks_without_spawning_next_piece() {
   using namespace tetris;
 
@@ -735,6 +838,11 @@ int main() {
   test_try_move_right_supports_partial_and_furthest_movement();
   test_try_soft_drop_supports_partial_and_furthest_movement();
   test_try_rotate_methods_cover_in_place_kick_and_failure_cases();
+  test_tick_does_not_move_without_gravity();
+  test_tick_accumulates_fractional_gravity();
+  test_tick_applies_multi_cell_gravity_and_keeps_remainder();
+  test_tick_stops_gravity_at_a_blocker();
+  test_tick_increases_gravity_after_margin_time();
   test_hard_drop_locks_without_spawning_next_piece();
   return 0;
 }

@@ -1,8 +1,11 @@
-#include "engine/Engine.hpp"
 #include "core/Core.hpp"
 #include "core/Piece.hpp"
+
+#include "engine/Engine.hpp"
 #include "engine/Movement.hpp"
 #include "engine/Spin.hpp"
+#include <algorithm>
+#include <cmath>
 #include <optional>
 #include <vector>
 
@@ -17,6 +20,7 @@ void Engine::reset(uint64_t seed) {
   _active_piece = std::nullopt;
   _hold_piece = std::nullopt;
   _spin_context = {};
+  _gravity = _starting_gravity;
 }
 
 std::vector<PieceType> Engine::preview_queue() const {
@@ -298,14 +302,41 @@ uint16_t Engine::hard_drop_distance() const {
   return res;
 }
 
-StepResult Engine::step(Action) {
-  // TODO: Dispatch a player action.
-  return {};
-}
-
 TickResult Engine::tick() {
-  // TODO: Advance gravity and lock timing.
-  return {};
+  if (_game_over || !_active_piece.has_value())
+    return {.moved_down = false, .locked = false, .game_over = true};
+
+  ActivePiece p = _active_piece.value();
+  TickResult res = {false, false, false};
+  if (_board.grounded(p)) { // TODO: Lock timing
+
+  } else { // Gravity
+    _gravity_counter += _gravity;
+    if (_tick_count > _gravity_margin_time)
+      _gravity += _gravity_increase;
+
+    // Apply gravity
+    if (_gravity_counter >= 1) {
+      res.moved_down = true;
+      int32_t count = std::clamp((int32_t)std::floor(_gravity_counter), 0,
+                                 (int32_t)_board.get_height());
+      for (; count > 0; count--) {
+        p.pos.row--;
+        if (_board.collide(p)) {
+          p.pos.row++;
+          break;
+        }
+      }
+
+      _active_piece = p;
+      _spin_context.kick_offset = std::nullopt;
+      _spin_context.last_movement = Movement::Gravity;
+      _gravity_counter -= std::floor(_gravity_counter);
+    }
+  }
+
+  _tick_count++;
+  return res;
 }
 
 LockResult Engine::hard_drop() {

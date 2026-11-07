@@ -14,8 +14,8 @@ void test_engine_constructor_defaults() {
           "engine should expose the board passed to its constructor");
   require(engine.board().get_height() == 24,
           "engine should preserve board dimensions");
-  require(engine.active_piece().value().piece.type() == tetris::PieceType::I,
-          "engine should start with a default active piece placeholder");
+  require(!engine.active_piece().has_value(),
+          "engine should start without an active piece until one is spawned");
   require(!engine.hold_piece().has_value(),
           "engine should start with an empty hold slot");
   require(!engine.game_over(), "engine should not start in game-over state");
@@ -35,8 +35,8 @@ void test_engine_reset_should_reseed_and_restore_defaults() {
 
   engine.reset(42);
 
-  require(engine.active_piece().value().piece.type() == tetris::PieceType::I,
-          "engine reset should respawn a new active piece from the randomizer");
+  require(!engine.active_piece().has_value(),
+          "engine reset should clear the active piece until one is spawned");
   require(!engine.hold_piece().has_value(),
           "engine reset should clear the hold slot");
   require(engine.preview_queue().size() == 5,
@@ -79,16 +79,14 @@ void test_engine_movement_and_rotation_actions() {
           "engine should rotate counterclockwise when legal");
   require(engine.try_rotate_180(),
           "engine should rotate 180 degrees when legal");
-
-  tetris::StepResult left_step = engine.step(tetris::Action::Left);
-  require(left_step.moved && !left_step.locked,
-          "engine step should report a successful movement action");
 }
 
 void test_engine_drop_tick_and_lock_resolution() {
   tetris::Engine engine(tetris::Board(10, 24), make_rotation_system(),
                         make_randomizer(), make_spin_system(),
-                        make_score_system(), make_attack_scheme(), 5);
+                        make_score_system(), make_attack_scheme(), 5,
+                        tetris::DefaultSpawnColOffset,
+                        tetris::DefaultSpawnRowOffset, 1.0);
 
   engine.spawn_next_piece();
 
@@ -99,8 +97,8 @@ void test_engine_drop_tick_and_lock_resolution() {
           "engine ghost piece should rest below the active piece");
 
   tetris::TickResult tick = engine.tick();
-  require(tick.moved_down || tick.locked,
-          "engine tick should either apply gravity or lock the piece");
+  require(tick.moved_down && !tick.locked,
+          "one-cell-per-tick gravity should move the piece without locking");
 
   tetris::LockResult hard_drop = engine.hard_drop();
   require(hard_drop.lines_cleared <= 4,

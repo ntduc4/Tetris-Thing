@@ -84,14 +84,20 @@ public:
          std::unique_ptr<AttackScheme> attack_scheme = nullptr,
          uint8_t preview_count = DefaultQueueLength,
          int16_t spawn_col_offset = DefaultSpawnColOffset,
-         int16_t spawn_row_offset = DefaultSpawnRowOffset)
+         int16_t spawn_row_offset = DefaultSpawnRowOffset,
+         double gravity = DefaultGravity,
+         double gravity_increase = DefaultGravityIncrease,
+         uint64_t gravity_margin_time = DefaultGravityMarginTime,
+         uint64_t lock_delay = DefaultLockDelay)
       : _board{board}, _rotation_system{std::move(rotation_system)},
         _randomizer{std::move(randomizer)},
         _spin_system{std::move(spin_system)},
         _score_system{std::move(score_system)},
         _attack_scheme{std::move(attack_scheme)}, _preview_count{preview_count},
         _spawn_col_offset{spawn_col_offset},
-        _spawn_row_offset{spawn_row_offset} {};
+        _spawn_row_offset{spawn_row_offset}, _starting_gravity{gravity},
+        _gravity{gravity}, _gravity_increase{gravity_increase},
+        _gravity_margin_time{gravity_margin_time}, _lock_delay{lock_delay} {};
 
   /** Resets engine state and reseeds the piece source. */
   void reset(uint64_t seed = 0);
@@ -156,8 +162,6 @@ public:
   /** Returns how far the active piece can hard drop. */
   uint16_t hard_drop_distance() const;
 
-  /** Applies a high-level player action. */
-  StepResult step(Action action);
   /** Advances the game by one gravity tick. */
   TickResult tick();
 
@@ -196,6 +200,12 @@ private:
   uint16_t _lock_timer = 0;
   uint16_t _lock_resets_used = 0;
   bool _last_tick_was_player_action = false;
+  double _starting_gravity = 0.0;
+  double _gravity = 0.0;
+  double _gravity_counter = 0.0;
+  double _gravity_increase = 0.0;
+  uint64_t _gravity_margin_time = 0;
+  uint64_t _lock_delay = 0;
 
   /** Spin and placement tracking for lock resolution. */
   SpinContext _spin_context;

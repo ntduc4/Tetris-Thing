@@ -17,6 +17,12 @@ constexpr uint8_t DefaultQueueLength = 5;
 /** Width and height of a piece's local render grid. */
 constexpr uint8_t PieceDimension = 4;
 
+// Gravity
+constexpr double DefaultGravity = 0.02;
+constexpr double DefaultGravityIncrease = 0.0025;
+constexpr uint64_t DefaultGravityMarginTime = 3600;
+constexpr uint64_t DefaultLockDelay = 30;
+
 /** Represents the content of one board cell. */
 enum class Cell : uint8_t { Empty, I, O, T, S, Z, J, L, Garbage, Unclearable };
 
