@@ -50,6 +50,38 @@ if(TETRIS_BUILD_QT)
     endif()
 endif()
 
+option(TETRIS_BUILD_PYTHON "Build the headless Python module when pybind11 is available" ON)
+if(TETRIS_BUILD_PYTHON)
+    find_package(Python3 QUIET COMPONENTS Interpreter Development.Module)
+    if(Python3_FOUND)
+        set(PYBIND11_FINDPYTHON ON)
+        find_package(pybind11 QUIET CONFIG)
+        if(NOT pybind11_FOUND)
+            # pip-installed pybind11 may not be in CMake's standard prefix path.
+            execute_process(
+                COMMAND "${Python3_EXECUTABLE}" -m pybind11 --cmakedir
+                OUTPUT_VARIABLE _pybind11_cmake_dir
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET
+                RESULT_VARIABLE _pybind11_result
+            )
+            if(_pybind11_result EQUAL 0)
+                set(pybind11_DIR "${_pybind11_cmake_dir}")
+                find_package(pybind11 QUIET CONFIG)
+            endif()
+        endif()
+        if(pybind11_FOUND)
+            set_target_properties(tetris_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
+            pybind11_add_module(tetris_py apps/python/bindings.cpp)
+            target_link_libraries(tetris_py PRIVATE tetris_engine)
+        else()
+            message(STATUS "pybind11 not found: skipping tetris_py")
+        endif()
+    else()
+        message(STATUS "Python 3 development files not found: skipping tetris_py")
+    endif()
+endif()
+
 
 # Tests cases
 enable_testing()
@@ -123,4 +155,11 @@ if(TARGET tetris_qt_widgets)
         add_test(NAME tetris_qt_app_tests COMMAND tetris_qt_app_tests)
         set_tests_properties(tetris_qt_app_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endif()
+endif()
+
+if(TARGET tetris_py)
+    add_test(NAME tetris_python_tests
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/python_bindings_tests.py)
+    set_tests_properties(tetris_python_tests PROPERTIES
+        ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:tetris_py>")
 endif()

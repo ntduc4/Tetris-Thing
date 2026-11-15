@@ -149,6 +149,10 @@ public:
   uint32_t pending_garbage_lines() const;
   /** Number of distinct incoming garbage packets. */
   size_t pending_garbage_packets() const { return _pending_garbage.size(); }
+  /** Snapshot of queued packets in arrival order (including remaining travel time). */
+  std::vector<PendingGarbage> pending_garbage() const {
+    return {_pending_garbage.begin(), _pending_garbage.end()};
+  }
 
   /** Change gravity, in cells per tick, while the game is running. */
   void set_gravity(double cells_per_tick);
