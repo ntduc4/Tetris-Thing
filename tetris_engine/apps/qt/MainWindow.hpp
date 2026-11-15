@@ -2,6 +2,7 @@
 
 #include "BoardWidget.hpp"
 #include "GameConfig.hpp"
+#include "PieceQueueWidget.hpp"
 #include "engine/Match.hpp"
 #include "engine/SoloSession.hpp"
 
@@ -61,9 +62,11 @@ private:
   std::unique_ptr<Match> _match;
   QComboBox *_mode, *_palette;
   QPushButton *_edit, *_next;
-  QLabel *_status[2], *_message;
+  QLabel *_status[2], *_streaks[2], *_message;
   QWidget *_panels[2];
   BoardWidget *_boards[2];
+  PieceHoldWidget *_holds[2];
+  PieceQueueWidget *_queues[2];
   QTimer *_timer;
   std::chrono::steady_clock::time_point _last_frame;
   std::chrono::nanoseconds _accumulated{};

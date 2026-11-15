@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <random>
 #include <vector>
 
 namespace tetris {
@@ -38,9 +39,9 @@ private:
   std::vector<std::unique_ptr<Engine>> _players;
   std::vector<uint16_t> _wins;
   std::vector<std::optional<size_t>> _targets;
+  /** Separate identically seeded incoming-hole streams for each player. */
+  std::vector<std::mt19937_64> _garbage_rng;
   uint16_t _wins_to_win;
-  uint64_t _seed = 0;
-  uint64_t _attack_sequence = 0;
   bool _started = false;
   bool _round_over = false;
   std::optional<size_t> _round_winner;

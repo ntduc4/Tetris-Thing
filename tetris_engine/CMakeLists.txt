@@ -36,6 +36,7 @@ if(TETRIS_BUILD_QT)
             apps/qt/BoardWidget.cpp
             apps/qt/GameConfig.cpp
             apps/qt/MainWindow.cpp
+            apps/qt/PieceQueueWidget.cpp
             apps/qt/RulesDialog.cpp
         )
         target_compile_features(tetris_qt_widgets PUBLIC cxx_std_20)
@@ -52,6 +53,8 @@ endif()
 
 # Tests cases
 enable_testing()
+
+add_test(NAME tetris_cli_srs_x_smoke COMMAND tetris_cli --ticks 30 --rotation srs-x)
 
 add_executable(tetris_core_board_tests tests/core/board_tests.cpp)
 target_link_libraries(tetris_core_board_tests PRIVATE tetris_engine)
@@ -106,6 +109,11 @@ add_executable(tetris_engine_gameplay_spec_tests tests/engine/gameplay_spec_test
 target_link_libraries(tetris_engine_gameplay_spec_tests PRIVATE tetris_engine)
 target_include_directories(tetris_engine_gameplay_spec_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_test(NAME tetris_engine_gameplay_spec_tests COMMAND tetris_engine_gameplay_spec_tests)
+
+add_executable(tetris_engine_rotation_variants_tests tests/engine/rotation_variants_tests.cpp)
+target_link_libraries(tetris_engine_rotation_variants_tests PRIVATE tetris_engine)
+target_include_directories(tetris_engine_rotation_variants_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+add_test(NAME tetris_engine_rotation_variants_tests COMMAND tetris_engine_rotation_variants_tests)
 
 if(TARGET tetris_qt_widgets)
     find_package(Qt6 QUIET COMPONENTS Test)

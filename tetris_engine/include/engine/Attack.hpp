@@ -1,9 +1,11 @@
 #pragma once
 
+#include "core/Piece.hpp"
 #include "engine/Spin.hpp"
 
 #include <cstdint>
 #include <array>
+#include <vector>
 
 namespace tetris {
 
@@ -14,6 +16,8 @@ struct AttackContext {
   bool perfect_clear = false;
   bool back_to_back = false;
   uint32_t combo = 0;
+  uint32_t surge_on_break = 0;
+  PieceType piece = PieceType::T;
 };
 
 /** Describes garbage produced by a player action. */
@@ -30,6 +34,15 @@ public:
 
   /** Returns the number of garbage lines sent for a lock outcome. */
   virtual uint16_t garbage_to_send(const AttackContext &ctx) const = 0;
+  /** Outgoing attack packets; normally one packet, or three surge parts. */
+  virtual std::vector<uint16_t> garbage_packets(const AttackContext &ctx) const {
+    uint16_t lines = garbage_to_send(ctx);
+    return lines ? std::vector<uint16_t>{lines} : std::vector<uint16_t>{};
+  }
+  /** Returns charged surge lines for a B2B count; zero for non-surge schemes. */
+  virtual uint32_t surge_charge(uint32_t) const { return 0; }
+  virtual bool perfect_clear_keeps_b2b() const { return false; }
+  virtual bool no_line_spin_keeps_b2b(SpinType, PieceType) const { return false; }
 };
 
 /** Configurable base attack, combo, B2B, and perfect-clear values. */
@@ -55,6 +68,12 @@ private:
 class TetrioSS2 : public AttackScheme {
 public:
   uint16_t garbage_to_send(const AttackContext &ctx) const override;
+  std::vector<uint16_t> garbage_packets(const AttackContext &ctx) const override;
+  uint32_t surge_charge(uint32_t b2b_count) const override;
+  bool perfect_clear_keeps_b2b() const override { return true; }
+  bool no_line_spin_keeps_b2b(SpinType spin, PieceType piece) const override {
+    return spin == SpinType::Mini && piece != PieceType::T;
+  }
 };
 /** TETR.IO Season 1 attack table. */
 class TetrioSS1 : public AttackScheme {

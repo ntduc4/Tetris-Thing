@@ -20,12 +20,22 @@ public:
   virtual bool allows_rotation() const { return true; }
 };
 
-/** Standard rotation system with wall-kick support. */
+/** TETR.IO SRS+: symmetric I-piece 90-degree kicks and conservative 180s. */
 class SRS : public RotationSystem {
 public:
   std::vector<Offset> kick_offsets(PieceType piece, Rotation from,
                                    Rotation to) const override;
 };
+/** Explicit name for the existing SRS+ implementation (SRS stays for API compatibility). */
+using SRSPlus = SRS;
+
+/** TETR.IO SRS-X: guideline 90-degree kicks and Heboris-style 180s. */
+class SRSX : public RotationSystem {
+public:
+  std::vector<Offset> kick_offsets(PieceType piece, Rotation from,
+                                   Rotation to) const override;
+};
+
 /** Rotation system that rejects all rotations. */
 class None : public RotationSystem {
 public:

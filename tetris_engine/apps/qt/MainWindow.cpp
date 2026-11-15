@@ -15,10 +15,14 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSettings>
+#include <QStringList>
 #include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -27,11 +31,143 @@ namespace {
 constexpr const char *ActionNames[] = {"Left", "Right", "Soft drop", "Rotate CW",
                                        "Rotate CCW", "Rotate 180", "Hold", "Hard drop"};
 
-QString piece_text(PieceType piece) {
-  Cell cell = get_from_piece_type(piece).cell_type();
-  char symbol = "IOTSZJL"[static_cast<int>(piece)];
-  return QString("<span style='color:%1'>%2</span>")
-      .arg(cell_color(cell).name(), QString(QChar(symbol)));
+int saved_int(QSettings &settings, const char *name, int fallback, int min, int max) {
+  bool valid = false;
+  int value = settings.value(name).toString().toInt(&valid);
+  return valid && value >= min && value <= max ? value : fallback;
+}
+
+double saved_double(QSettings &settings, const char *name, double fallback, double max) {
+  bool valid = false;
+  double value = settings.value(name).toString().toDouble(&valid);
+  return valid && std::isfinite(value) && value >= 0 && value <= max ? value : fallback;
+}
+
+template <typename T, size_t N>
+void save_table(QSettings &settings, const char *name, const std::array<T, N> &table) {
+  QStringList entries;
+  for (T value : table)
+    entries << QString::number(value);
+  settings.setValue(name, entries);
+}
+
+template <typename T, size_t N>
+void load_table(QSettings &settings, const char *name, std::array<T, N> &table) {
+  const QStringList entries = settings.value(name).toStringList();
+  if (entries.size() != static_cast<qsizetype>(N))
+    return;
+  std::array<T, N> loaded;
+  for (size_t i = 0; i < N; ++i) {
+    bool valid = false;
+    auto value = entries[static_cast<qsizetype>(i)].toULongLong(&valid);
+    if (!valid || value > std::numeric_limits<T>::max())
+      return;
+    loaded[i] = static_cast<T>(value);
+  }
+  table = loaded;
+}
+
+void save_config(QSettings &settings, const char *group, const GameConfig &c) {
+  settings.beginGroup(group);
+  settings.setValue("preset", static_cast<int>(c.preset));
+  settings.setValue("width", c.width);
+  settings.setValue("height", c.height);
+  settings.setValue("gravity", c.gravity);
+  settings.setValue("gravityIncrease", c.gravity_increase);
+  settings.setValue("gravityMargin", static_cast<qulonglong>(c.gravity_margin));
+  settings.setValue("lockDelay", c.lock_delay);
+  settings.setValue("lockResets", c.lock_resets);
+  settings.setValue("garbageDelay", c.garbage_delay);
+  settings.setValue("spin", static_cast<int>(c.spin));
+  settings.setValue("rotation", static_cast<int>(c.rotation));
+  settings.setValue("bag", static_cast<int>(c.bag));
+  settings.setValue("attack", static_cast<int>(c.attack));
+  save_table(settings, "attackNormal", c.attacks.normal);
+  save_table(settings, "attackMini", c.attacks.mini);
+  save_table(settings, "attackFull", c.attacks.full);
+  settings.setValue("attackB2B", c.attacks.b2b_bonus);
+  settings.setValue("attackPC", c.attacks.perfect_clear_bonus);
+  settings.setValue("attackCombo", c.attacks.combo_multiplier);
+  save_table(settings, "scoreNormal", c.scores.normal);
+  save_table(settings, "scoreMini", c.scores.mini);
+  save_table(settings, "scoreFull", c.scores.full);
+  settings.setValue("scoreCombo", static_cast<qulonglong>(c.scores.combo_bonus));
+  settings.setValue("scorePC", static_cast<qulonglong>(c.scores.perfect_clear_bonus));
+  settings.setValue("hardPoints", c.scores.hard_drop_point);
+  settings.setValue("softPoints", c.scores.soft_drop_point);
+  settings.setValue("das", c.das);
+  settings.setValue("arr", c.arr);
+  settings.setValue("softDrop", c.soft_drop);
+  settings.setValue("sprintGoal", c.sprint_goal);
+  settings.setValue("blitzSeconds", c.blitz_seconds);
+  settings.setValue("winsToWin", c.wins_to_win);
+  settings.endGroup();
+}
+
+void load_config(QSettings &settings, const char *group, GameConfig &c) {
+  settings.beginGroup(group);
+  c.preset = static_cast<Preset>(saved_int(settings, "preset", static_cast<int>(c.preset), 0, 2));
+  c.width = saved_int(settings, "width", c.width, 4, 20);
+  c.height = saved_int(settings, "height", c.height, 4, 80);
+  c.gravity = saved_double(settings, "gravity", c.gravity, 40);
+  c.gravity_increase = saved_double(settings, "gravityIncrease", c.gravity_increase, 1);
+  c.gravity_margin = saved_int(settings, "gravityMargin", c.gravity_margin, 0, 1000000);
+  c.lock_delay = saved_int(settings, "lockDelay", c.lock_delay, 0, 600);
+  c.lock_resets = saved_int(settings, "lockResets", c.lock_resets, 0, 1000);
+  c.garbage_delay = saved_int(settings, "garbageDelay", c.garbage_delay, 0, 600);
+  c.spin = static_cast<SpinRule>(saved_int(settings, "spin", static_cast<int>(c.spin), 0, 3));
+  c.rotation = static_cast<RotationRule>(saved_int(settings, "rotation", static_cast<int>(c.rotation), 0, 2));
+  c.bag = static_cast<BagRule>(saved_int(settings, "bag", static_cast<int>(c.bag), 0, 2));
+  c.attack = static_cast<AttackRule>(saved_int(settings, "attack", static_cast<int>(c.attack), 0, 4));
+  load_table(settings, "attackNormal", c.attacks.normal);
+  load_table(settings, "attackMini", c.attacks.mini);
+  load_table(settings, "attackFull", c.attacks.full);
+  c.attacks.b2b_bonus = saved_int(settings, "attackB2B", c.attacks.b2b_bonus, 0, 1000);
+  c.attacks.perfect_clear_bonus = saved_int(settings, "attackPC", c.attacks.perfect_clear_bonus, 0, 1000);
+  c.attacks.combo_multiplier = saved_double(settings, "attackCombo", c.attacks.combo_multiplier, 100);
+  load_table(settings, "scoreNormal", c.scores.normal);
+  load_table(settings, "scoreMini", c.scores.mini);
+  load_table(settings, "scoreFull", c.scores.full);
+  c.scores.combo_bonus = saved_int(settings, "scoreCombo", c.scores.combo_bonus, 0, 1000000);
+  c.scores.perfect_clear_bonus = saved_int(settings, "scorePC", c.scores.perfect_clear_bonus, 0, 1000000);
+  c.scores.hard_drop_point = saved_int(settings, "hardPoints", c.scores.hard_drop_point, 0, 10000);
+  c.scores.soft_drop_point = saved_int(settings, "softPoints", c.scores.soft_drop_point, 0, 10000);
+  c.das = saved_int(settings, "das", c.das, 0, 60);
+  c.arr = saved_int(settings, "arr", c.arr, 0, 60);
+  c.soft_drop = saved_int(settings, "softDrop", c.soft_drop, 1, 80);
+  c.sprint_goal = saved_int(settings, "sprintGoal", c.sprint_goal, 1, 1000);
+  c.blitz_seconds = saved_int(settings, "blitzSeconds", c.blitz_seconds, 1, 3600);
+  c.wins_to_win = saved_int(settings, "winsToWin", c.wins_to_win, 1, 20);
+  settings.endGroup();
+}
+
+void save_bindings(QSettings &settings, const Bindings (&bindings)[2]) {
+  for (int player = 0; player < 2; ++player) {
+    QStringList keys;
+    for (int key : bindings[player])
+      keys << QString::number(key);
+    settings.setValue(QString("bindings/player%1").arg(player + 1), keys);
+  }
+}
+
+void load_bindings(QSettings &settings, Bindings (&bindings)[2]) {
+  Bindings loaded[2];
+  std::vector<int> used{Qt::Key_F};
+  for (int player = 0; player < 2; ++player) {
+    QStringList keys = settings.value(QString("bindings/player%1").arg(player + 1)).toStringList();
+    if (keys.size() != InputCount)
+      return;
+    for (int input = 0; input < InputCount; ++input) {
+      bool valid = false;
+      int key = keys[input].toInt(&valid);
+      if (!valid || key < Qt::Key_Space || key == Qt::Key_unknown ||
+          std::find(used.begin(), used.end(), key) != used.end())
+        return;
+      loaded[player][input] = key;
+      used.push_back(key);
+    }
+  }
+  std::copy(std::begin(loaded), std::end(loaded), bindings);
 }
 
 class BindingsDialog : public QDialog {
@@ -98,6 +234,12 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
                   Qt::Key_Q, Qt::Key_E, Qt::Key_C, Qt::Key_Space};
   _bindings[1] = {Qt::Key_Left, Qt::Key_Right, Qt::Key_Down, Qt::Key_Up,
                   Qt::Key_J, Qt::Key_K, Qt::Key_L, Qt::Key_Return};
+  {
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "TetrisEngine", "Tetris");
+    load_config(settings, "solo", _solo_rules);
+    load_config(settings, "room", _room_rules);
+    load_bindings(settings, _bindings);
+  }
 
   auto *outer = new QVBoxLayout(this);
   auto *menu = new QHBoxLayout;
@@ -140,9 +282,31 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
     _panels[i]->setLayout(column);
     auto *title = new QLabel(i == 0 ? "PLAYER 1" : "PLAYER 2", _panels[i]);
     column->addWidget(title);
+    auto *field = new QHBoxLayout;
+    field->setContentsMargins(0, 0, 0, 0);
+    field->setSpacing(4);
+    auto *side = new QVBoxLayout;
+    side->setContentsMargins(0, 0, 0, 0);
+    side->setSpacing(8);
+    _holds[i] = new PieceHoldWidget(_panels[i]);
+    _holds[i]->setObjectName(i == 0 ? "hold1" : "hold2");
+    side->addWidget(_holds[i]);
+    _streaks[i] = new QLabel(_panels[i]);
+    _streaks[i]->setObjectName(i == 0 ? "streak1" : "streak2");
+    _streaks[i]->setFixedWidth(90);
+    _streaks[i]->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+    _streaks[i]->setTextFormat(Qt::RichText);
+    _streaks[i]->setStyleSheet("background: #151c2b; border: 1px solid #354159; padding: 4px;");
+    side->addWidget(_streaks[i]);
+    side->addStretch();
+    field->addLayout(side);
     _boards[i] = new BoardWidget(_panels[i]);
     _boards[i]->setObjectName(i == 0 ? "board1" : "board2");
-    column->addWidget(_boards[i], 1);
+    field->addWidget(_boards[i], 1);
+    _queues[i] = new PieceQueueWidget(_panels[i]);
+    _queues[i]->setObjectName(i == 0 ? "queue1" : "queue2");
+    field->addWidget(_queues[i]);
+    column->addLayout(field, 1);
     _status[i] = new QLabel(_panels[i]);
     _status[i]->setObjectName(i == 0 ? "status1" : "status2");
     _status[i]->setTextFormat(Qt::RichText);
@@ -156,8 +320,8 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
   _message->setWordWrap(true);
   outer->addWidget(_message);
   auto *help = new QLabel(
-      "P1: A/D move, S down, W/Q rotate, E 180, C hold, Space drop. "
-      "P2: ←/→ move, ↓ down, ↑/J rotate, K 180, L hold, Enter drop. "
+       "Default P1: A/D move, S down, W/Q rotate, E 180, C hold, Space drop. "
+       "Default P2: ←/→ move, ↓ down, ↑/J rotate, K 180, L hold, Enter drop. "
       "F = solo draw mode; left-drag paint, right-drag erase.", this);
   help->setWordWrap(true);
   outer->addWidget(help);
@@ -205,8 +369,11 @@ void MainWindow::clear_keys() {
 
 void MainWindow::restart() {
   clear_keys();
-  for (auto *board : _boards)
-    board->set_engine(nullptr);
+  for (int i = 0; i < 2; ++i) {
+    _boards[i]->set_engine(nullptr);
+    _holds[i]->set_piece(std::nullopt);
+    _queues[i]->set_pieces({});
+  }
   _solo.reset();
   _match.reset();
   const uint64_t seed = _seed++;
@@ -254,8 +421,11 @@ void MainWindow::open_rules() {
   auto &rules = is_room() ? _room_rules : _solo_rules;
   RulesDialog dialog(rules, is_room(), this);
   bool accepted = dialog.exec() == QDialog::Accepted;
-  if (accepted)
+  if (accepted) {
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "TetrisEngine", "Tetris");
+    save_config(settings, is_room() ? "room" : "solo", rules);
     restart();
+  }
   _last_frame = std::chrono::steady_clock::now();
   _accumulated = std::chrono::nanoseconds{};
   _timer->start();
@@ -266,7 +436,10 @@ void MainWindow::open_bindings() {
   _timer->stop();
   clear_keys();
   BindingsDialog dialog(_bindings, this);
-  dialog.exec();
+  if (dialog.exec() == QDialog::Accepted) {
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "TetrisEngine", "Tetris");
+    save_bindings(settings, _bindings);
+  }
   _last_frame = std::chrono::steady_clock::now();
   _accumulated = std::chrono::nanoseconds{};
   _timer->start();
@@ -438,14 +611,31 @@ void MainWindow::frame() {
 void MainWindow::refresh() {
   _boards[0]->set_editable(_solo && _solo->engine().edit_mode());
   _boards[0]->set_cursor(_edit_row, _edit_col);
+  const auto &rules = is_room() ? _room_rules : _solo_rules;
   for (int i = 0; i < 2; ++i) {
     const Engine *game = current_engine(i);
     if (!game) continue;
-    QString previews;
-    for (PieceType piece : game->preview_queue()) previews += piece_text(piece) + "  ";
-    QString hold = game->hold_piece() ? piece_text(*game->hold_piece()) : "−";
-    _status[i]->setText(QString("Hold: %1   Next: %2<br>Lines: %3   Score: %4   Incoming: %5%6")
-        .arg(hold, previews).arg(game->lines_cleared()).arg(game->score())
+    _queues[i]->set_pieces(game->preview_queue());
+    _holds[i]->set_piece(game->hold_piece());
+    auto counter = [](const QString &label, const QString &value, bool active) {
+      return QString("<span style='color:%1'>%2<br><b>%3</b></span>")
+          .arg(active ? "#f8c45c" : "#8392a9", label, value);
+    };
+    const uint32_t b2b = game->back_to_back_count();
+    const uint32_t combo = game->combo();
+    QString streaks = counter("B2B", b2b ? QString("x%1").arg(b2b) : "—", b2b > 0) +
+                      "<br><br>" +
+                      counter("COMBO", combo ? QString("x%1").arg(combo) : "—", combo > 0);
+    if (rules.attack == AttackRule::Season2) {
+      const uint32_t charge = game->surge_charge();
+      streaks += "<br><br>" + counter(
+          "★ SURGE", charge ? QString("+%1").arg(charge)
+                               : QString("%1 / 4").arg(std::min<uint32_t>(b2b, 4)),
+          charge > 0);
+    }
+    _streaks[i]->setText(streaks);
+    _status[i]->setText(QString("Lines: %1   Score: %2   Incoming: %3%4")
+        .arg(game->lines_cleared()).arg(game->score())
         .arg(game->pending_garbage_lines())
         .arg(_match ? QString("   Wins: %1").arg(_match->wins(i)) : QString()));
     _boards[i]->update();

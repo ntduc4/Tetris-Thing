@@ -116,12 +116,16 @@ void test_engine_garbage_and_game_over_flow() {
                         make_score_system(), make_attack_scheme(), 5);
 
   engine.receive_garbage(2, 3);
-  require(engine.board().get(0, 3) == tetris::Cell::Empty,
-          "engine garbage receive should preserve the requested hole column");
+  require(engine.board().max_height() == 0 && engine.pending_garbage_lines() == 2,
+          "incoming garbage should wait for a placement, even without an active piece");
 
   engine.receive_garbage(tetris::GarbageEvent{.lines = 24, .hole_col = 4});
-  require(engine.board().touch_max_height() || engine.game_over(),
-          "engine oversized garbage should eventually top out the board");
+  require(engine.pending_garbage_lines() == 26 && !engine.game_over(),
+          "oversized garbage should queue rather than top out immediately");
+  engine.spawn_next_piece();
+  engine.hard_drop();
+  require(engine.pending_garbage_lines() == 18 && !engine.game_over(),
+          "one non-clearing placement should accept no more than eight lines");
 }
 
 } // namespace

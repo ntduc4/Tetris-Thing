@@ -7,8 +7,10 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace tetris {
@@ -33,6 +35,7 @@ void Engine::reset(uint64_t seed) {
   _score = 0;
   _combo = 0;
   _back_to_back = false;
+  _back_to_back_count = 0;
   _last_successful_placement.reset();
   _last_lock_result.reset();
   _pending_garbage.clear();
@@ -472,6 +475,7 @@ TickResult Engine::tick() {
       res.locked = lock.locked;
       res.lines_cleared = lock.lines_cleared;
       res.attack_sent = lock.attack_sent;
+      res.attack_packets = std::move(lock.attack_packets);
       res.game_over = lock.game_over;
     }
   } else {
@@ -521,10 +525,20 @@ LockResult Engine::lock_active_piece() {
   } else {
     _combo = 0;
   }
-  bool difficult = lc > 0 && (spin != SpinType::None || lc >= 4);
+  bool difficult = (lc > 0 && (spin != SpinType::None || lc >= 4 ||
+                              (perfect_clear && _attack_scheme &&
+                               _attack_scheme->perfect_clear_keeps_b2b()))) ||
+                   (lc == 0 && _attack_scheme &&
+                    _attack_scheme->no_line_spin_keeps_b2b(spin, p.piece.type()));
   bool back_to_back_bonus = difficult && _back_to_back;
-  if (lc > 0)
+  const uint32_t surge_on_break = lc > 0 && !difficult ? surge_charge() : 0;
+  if (lc > 0 || difficult) {
+    if (back_to_back_bonus && _back_to_back_count < UINT32_MAX)
+      ++_back_to_back_count;
+    else if (!difficult)
+      _back_to_back_count = 0;
     _back_to_back = difficult;
+  }
 
   ScoreEvent score_event{.lines_cleared = lc,
                          .spin = spin,
@@ -536,25 +550,35 @@ LockResult Engine::lock_active_piece() {
                              _soft_drop_cells, UINT16_MAX))};
   if (_score_system)
     _score += _score_system->score(score_event);
-  uint16_t outgoing = 0;
+  std::vector<uint16_t> outgoing_packets;
   if (_attack_scheme)
-    outgoing = _attack_scheme->garbage_to_send(
+    outgoing_packets = _attack_scheme->garbage_packets(
         AttackContext{.lines_cleared = lc,
                       .spin = spin,
                       .perfect_clear = perfect_clear,
                       .back_to_back = back_to_back_bonus,
-                      .combo = _combo});
+                      .combo = _combo,
+                      .surge_on_break = surge_on_break,
+                      .piece = p.piece.type()});
   // Full blocking: cancel oldest incoming lines before anything is sent.
   for (auto &packet : _pending_garbage) {
-    uint16_t cancelled = std::min(outgoing, packet.event.lines);
-    packet.event.lines -= cancelled;
-    outgoing -= cancelled;
+    for (auto &outgoing : outgoing_packets) {
+      uint16_t cancelled = std::min(outgoing, packet.event.lines);
+      packet.event.lines -= cancelled;
+      outgoing -= cancelled;
+    }
   }
+  outgoing_packets.erase(std::remove(outgoing_packets.begin(), outgoing_packets.end(), 0),
+                         outgoing_packets.end());
+  uint16_t outgoing = static_cast<uint16_t>(std::accumulate(
+      outgoing_packets.begin(), outgoing_packets.end(), 0u));
   _pending_garbage.erase(
       std::remove_if(_pending_garbage.begin(), _pending_garbage.end(),
                      [](const PendingGarbage &packet) { return packet.event.lines == 0; }),
       _pending_garbage.end());
-  apply_ready_garbage();
+  // Clearing a line tanks the remaining garbage, even if the clear sent no attack.
+  if (lc == 0)
+    apply_ready_garbage();
   _lines_cleared += lc;
   _spin_context = {};
   _gravity_counter = 0;
@@ -566,7 +590,8 @@ LockResult Engine::lock_active_piece() {
           .perfect_clear = perfect_clear,
           .spin = spin,
           .attack_sent = outgoing,
-          .locked = true};
+          .locked = true,
+          .attack_packets = std::move(outgoing_packets)};
   _last_lock_result = result;
   return result;
 }
@@ -581,16 +606,19 @@ void Engine::receive_garbage(const GarbageEvent &garbage) {
     return;
   _pending_garbage.push_back({.event = garbage,
                               .delay_ticks = _garbage_queue_delay});
-  if (!_active_piece && _garbage_queue_delay == 0)
-    apply_ready_garbage();
 }
 
 void Engine::apply_ready_garbage() {
+  uint16_t remaining = 8;
   while (!_pending_garbage.empty() &&
-         _pending_garbage.front().delay_ticks == 0) {
-    const auto packet = _pending_garbage.front();
-    _pending_garbage.pop_front();
-    _board.add_garbage(packet.event.hole_col, packet.event.lines);
+         _pending_garbage.front().delay_ticks == 0 && remaining > 0) {
+    auto &packet = _pending_garbage.front();
+    uint16_t lines = std::min(remaining, packet.event.lines);
+    _board.add_garbage(packet.event.hole_col, lines);
+    remaining -= lines;
+    packet.event.lines -= lines;
+    if (packet.event.lines == 0)
+      _pending_garbage.pop_front();
     if (_board.touch_max_height()) {
       _game_over = true;
       break;

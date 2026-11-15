@@ -157,6 +157,7 @@ bool input(SoloSession &session, char key, uint16_t &row, uint16_t &col,
 void usage() {
   std::cout << "tetris_cli [--seed N] [--width N] [--height N] [--gravity G] "
                "[--lock-delay ticks] [--spin t|all|none] "
+               "[--rotation srs+|srs-x|none] "
                "[--mode marathon|sprint|blitz] [--goal lines] "
                "[--time seconds] [--ticks N]\n"
                "Runs a 60-tick-per-second terminal game. --ticks runs a headless smoke test.\n";
@@ -170,6 +171,7 @@ int main(int argc, char **argv) {
     double gravity = DefaultGravity;
     uint64_t lock_delay = DefaultLockDelay, headless_ticks = 0;
     std::string spin = "all";
+    std::string rotation = "srs+";
     SoloSettings solo;
     for (int i = 1; i < argc; ++i) {
       std::string arg = argv[i];
@@ -182,6 +184,7 @@ int main(int argc, char **argv) {
       else if (arg == "--gravity") gravity = std::stod(value);
       else if (arg == "--lock-delay") lock_delay = std::stoull(value);
       else if (arg == "--spin") spin = value;
+      else if (arg == "--rotation") rotation = value;
       else if (arg == "--ticks") headless_ticks = std::stoull(value);
       else if (arg == "--mode") {
         if (value == "marathon") solo.mode = SoloMode::Marathon;
@@ -195,13 +198,18 @@ int main(int argc, char **argv) {
       else { usage(); return 1; }
     }
     if (width < 4 || width > 40 || height < 4 || height > 80 ||
-        (spin != "t" && spin != "all" && spin != "none")) {
+        (spin != "t" && spin != "all" && spin != "none") ||
+        (rotation != "srs+" && rotation != "srs-x" && rotation != "none")) {
       usage(); return 1;
     }
     std::unique_ptr<SpinSystem> spin_system;
     if (spin == "t") spin_system = std::make_unique<TSpin>();
     if (spin == "all") spin_system = std::make_unique<AllSpin>();
-    Engine game(Board(width, height), std::make_unique<SRS>(),
+    std::unique_ptr<RotationSystem> rotation_system;
+    if (rotation == "srs+") rotation_system = std::make_unique<SRSPlus>();
+    if (rotation == "srs-x") rotation_system = std::make_unique<SRSX>();
+    if (rotation == "none") rotation_system = std::make_unique<None>();
+    Engine game(Board(width, height), std::move(rotation_system),
                 std::make_unique<SevenBag>(seed), std::move(spin_system),
                 std::make_unique<Classical>(), std::make_unique<TetrioSS2>(),
                 DefaultQueueLength, (width - 4) / 2,

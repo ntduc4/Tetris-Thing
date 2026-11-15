@@ -5,7 +5,7 @@
 namespace tetris::qtapp {
 
 enum class SpinRule { AllMiniPlus, AllMini, TOnly, Off };
-enum class RotationRule { SRSPlus, Off };
+enum class RotationRule { SRSPlus, SRSX, Off };
 enum class BagRule { Seven, Fourteen, Random };
 enum class AttackRule { Season2, Season1, Jstris, Custom, Off };
 enum class Preset { TetrioLike, Classic, Custom };
@@ -19,7 +19,7 @@ struct GameConfig {
   uint64_t gravity_margin = DefaultGravityMarginTime;
   int lock_delay = DefaultLockDelay;
   int lock_resets = 15;
-  int garbage_delay = 0;
+  int garbage_delay = 20; // Approximate incoming garbage travel time at 60 ticks/s.
   SpinRule spin = SpinRule::AllMiniPlus;
   RotationRule rotation = RotationRule::SRSPlus;
   BagRule bag = BagRule::Seven;

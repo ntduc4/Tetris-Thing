@@ -10,6 +10,7 @@
 #include "engine/Score.hpp"
 #include "engine/Spin.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -47,6 +48,7 @@ struct TickResult {
   bool game_over = false;
   uint16_t lines_cleared = 0;
   uint16_t attack_sent = 0;
+  std::vector<uint16_t> attack_packets;
 };
 
 /** Describes the outcome of locking the active piece. */
@@ -57,6 +59,7 @@ struct LockResult {
   SpinType spin = SpinType::None;
   uint16_t attack_sent = 0;
   bool locked = false;
+  std::vector<uint16_t> attack_packets;
 };
 
 /**
@@ -130,6 +133,12 @@ public:
   uint32_t combo() const { return _combo; }
   /** Returns whether back-to-back is currently active. */
   bool back_to_back() const { return _back_to_back; }
+  /** Number of consecutive B2B bonus clears (first difficult clear is zero). */
+  uint32_t back_to_back_count() const { return _back_to_back_count; }
+  /** Charged surge attack for the selected attack scheme, if any. */
+  uint32_t surge_charge() const {
+    return _attack_scheme ? _attack_scheme->surge_charge(_back_to_back_count) : 0;
+  }
   /** Number of simulation ticks since reset (60 ticks = one second in the CLI). */
   uint64_t tick_count() const { return _tick_count; }
   /** Last successful lock, if any. */
@@ -138,6 +147,8 @@ public:
   }
   /** Total lines of incoming garbage still queued. */
   uint32_t pending_garbage_lines() const;
+  /** Number of distinct incoming garbage packets. */
+  size_t pending_garbage_packets() const { return _pending_garbage.size(); }
 
   /** Change gravity, in cells per tick, while the game is running. */
   void set_gravity(double cells_per_tick);
@@ -145,7 +156,7 @@ public:
   void set_gravity_increase(double per_tick, uint64_t margin_tick);
   /** Change grounded lock delay and the number of move/rotation resets allowed. */
   void set_lock_delay(uint64_t ticks, uint16_t reset_limit = 15);
-  /** Set the delay before incoming garbage can rise after a lock. */
+  /** Set the travel time before incoming garbage can rise on a non-clearing lock. */
   void set_garbage_delay(uint16_t ticks) { _garbage_queue_delay = ticks; }
   void set_spin_system(std::unique_ptr<SpinSystem> system) {
     _spin_system = std::move(system);
@@ -225,6 +236,7 @@ private:
   uint64_t _score = 0;
   uint32_t _combo = 0;
   bool _back_to_back = false;
+  uint32_t _back_to_back_count = 0;
   int16_t _spawn_col_offset = 0;
   int16_t _spawn_row_offset = 0;
 
@@ -251,13 +263,13 @@ private:
   uint16_t _hard_drop_cells = 0;
   bool _edit_mode = false;
 
-  /** Pending garbage state processed by tick progression. */
+  /** Pending garbage state processed by tick progression (at most 8 lines per lock). */
   std::deque<PendingGarbage> _pending_garbage;
   uint16_t _garbage_queue_delay = 0;
 
   /** Restarts grounded lock timing after a successful player movement. */
   void on_player_move(bool was_grounded);
-  /** Applies incoming packets whose delay has elapsed. */
+  /** Applies up to 8 ready lines in packet order after a non-clearing lock. */
   void apply_ready_garbage();
 
   std::unique_ptr<RotationSystem> _rotation_system;

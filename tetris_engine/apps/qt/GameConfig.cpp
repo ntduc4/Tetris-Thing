@@ -12,6 +12,7 @@ GameConfig classic_config() {
   config.attack = AttackRule::Season1;
   config.gravity = 1.0 / 60.0;
   config.lock_delay = 30;
+  config.garbage_delay = 0;
   return config;
 }
 
@@ -19,8 +20,10 @@ Engine make_engine(const GameConfig &config) {
   std::unique_ptr<RotationSystem> rotation;
   if (config.rotation == RotationRule::Off)
     rotation = std::make_unique<None>();
+  else if (config.rotation == RotationRule::SRSX)
+    rotation = std::make_unique<SRSX>();
   else
-    rotation = std::make_unique<SRS>();
+    rotation = std::make_unique<SRSPlus>();
 
   std::unique_ptr<Randomizer> bag;
   switch (config.bag) {

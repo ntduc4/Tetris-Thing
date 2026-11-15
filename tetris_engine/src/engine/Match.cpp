@@ -7,7 +7,7 @@ namespace tetris {
 Match::Match(std::vector<std::unique_ptr<Engine>> players,
              uint16_t wins_to_win)
     : _players(std::move(players)), _wins(_players.size(), 0),
-      _targets(_players.size()),
+      _targets(_players.size()), _garbage_rng(_players.size()),
       _wins_to_win(wins_to_win) {
   if (_players.size() < 2 || wins_to_win == 0)
     throw std::invalid_argument("match requires at least two players and one win");
@@ -17,11 +17,11 @@ Match::Match(std::vector<std::unique_ptr<Engine>> players,
 }
 
 void Match::start(uint64_t seed) {
-  _seed = seed;
-  _attack_sequence = 0;
   _started = true;
   _round_over = false;
   _round_winner.reset();
+  for (auto &rng : _garbage_rng)
+    rng.seed(seed);
   for (size_t i = 0; i < _players.size(); ++i) {
     _players[i]->reset(seed);
     _players[i]->spawn_next_piece();
@@ -40,8 +40,9 @@ void Match::deliver(size_t sender, uint16_t lines) {
   if (lines == 0)
     return;
   auto send_to = [&](size_t target) {
-    uint16_t hole = static_cast<uint16_t>((_seed + sender +
-                       _attack_sequence++) % _players[target]->board().get_width());
+    const uint16_t width = _players[target]->board().get_width();
+    uint16_t hole = std::uniform_int_distribution<uint16_t>(0, width - 1)(
+        _garbage_rng[target]);
     _players[target]->receive_garbage(lines, hole);
   };
   if (_targets[sender] && !_players[*_targets[sender]]->game_over()) {
@@ -71,7 +72,8 @@ std::vector<TickResult> Match::tick() {
     results.push_back(result);
   }
   for (size_t i = 0; i < results.size(); ++i)
-    deliver(i, results[i].attack_sent);
+    for (uint16_t packet : results[i].attack_packets)
+      deliver(i, packet);
   check_winner();
   return results;
 }
@@ -85,7 +87,8 @@ LockResult Match::hard_drop(size_t index) {
   if (result.locked) {
     if (!player(index).game_over())
       player(index).spawn_next_piece();
-    deliver(index, result.attack_sent);
+    for (uint16_t packet : result.attack_packets)
+      deliver(index, packet);
     check_winner();
   }
   return result;

@@ -113,11 +113,12 @@ RulesDialog::RulesDialog(GameConfig &config, bool multiplayer, QWidget *parent)
   auto *r = new QFormLayout(rules);
   _spin = options({"All-Mini+", "All-Mini", "T-spins", "No spins"}, rules);
   _spin->setObjectName("spinRule");
-  _rotation = options({"SRS+ (90 / 180)", "No rotation"}, rules);
+  _rotation = options({"SRS+", "SRS-X", "No rotation"}, rules);
   _rotation->setObjectName("rotationRule");
   _bag = options({"7-bag", "14-bag", "Random"}, rules);
   _attack = options({"Season 2-like", "Season 1-like", "Jstris-like",
                      "Custom table", "No attack"}, rules);
+  _attack->setObjectName("attackRule");
   r->addRow("Spin detection:", _spin);
   r->addRow("Rotation:", _rotation);
   r->addRow("Randomizer:", _bag);
@@ -133,6 +134,7 @@ RulesDialog::RulesDialog(GameConfig &config, bool multiplayer, QWidget *parent)
   constexpr const char *labels[] = {"Normal", "Mini spin", "Full spin"};
   for (int i = 0; i < 3; ++i) {
     _attack_lines[i] = new QLineEdit(tables);
+    _attack_lines[i]->setObjectName(QString("attackTable_%1").arg(i));
     t->addRow(QString("%1 attack (0–4 lines):").arg(labels[i]), _attack_lines[i]);
   }
   _attack_b2b = number(0, 1000, tables);
@@ -143,6 +145,7 @@ RulesDialog::RulesDialog(GameConfig &config, bool multiplayer, QWidget *parent)
   t->addRow("Attack combo multiplier:", _attack_combo);
   for (int i = 0; i < 3; ++i) {
     _score_lines[i] = new QLineEdit(tables);
+    _score_lines[i]->setObjectName(QString("scoreTable_%1").arg(i));
     t->addRow(QString("%1 score (0–4 lines):").arg(labels[i]), _score_lines[i]);
   }
   _score_combo = number(0, 1000000, tables);
