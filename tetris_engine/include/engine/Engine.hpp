@@ -45,6 +45,8 @@ struct TickResult {
   bool moved_down = false;
   bool locked = false;
   bool game_over = false;
+  uint16_t lines_cleared = 0;
+  uint16_t attack_sent = 0;
 };
 
 /** Describes the outcome of locking the active piece. */
@@ -54,6 +56,7 @@ struct LockResult {
   bool perfect_clear = false;
   SpinType spin = SpinType::None;
   uint16_t attack_sent = 0;
+  bool locked = false;
 };
 
 /**
@@ -127,6 +130,38 @@ public:
   uint32_t combo() const { return _combo; }
   /** Returns whether back-to-back is currently active. */
   bool back_to_back() const { return _back_to_back; }
+  /** Number of simulation ticks since reset (60 ticks = one second in the CLI). */
+  uint64_t tick_count() const { return _tick_count; }
+  /** Last successful lock, if any. */
+  const std::optional<LockResult> &last_lock_result() const {
+    return _last_lock_result;
+  }
+  /** Total lines of incoming garbage still queued. */
+  uint32_t pending_garbage_lines() const;
+
+  /** Change gravity, in cells per tick, while the game is running. */
+  void set_gravity(double cells_per_tick);
+  /** Change the rate at which gravity increases after the margin time. */
+  void set_gravity_increase(double per_tick, uint64_t margin_tick);
+  /** Change grounded lock delay and the number of move/rotation resets allowed. */
+  void set_lock_delay(uint64_t ticks, uint16_t reset_limit = 15);
+  /** Set the delay before incoming garbage can rise after a lock. */
+  void set_garbage_delay(uint16_t ticks) { _garbage_queue_delay = ticks; }
+  void set_spin_system(std::unique_ptr<SpinSystem> system) {
+    _spin_system = std::move(system);
+  }
+  void set_score_system(std::unique_ptr<ScoreSystem> system) {
+    _score_system = std::move(system);
+  }
+  void set_attack_scheme(std::unique_ptr<AttackScheme> scheme) {
+    _attack_scheme = std::move(scheme);
+  }
+
+  /** Pause play to paint board cells. Exiting fails while the piece collides. */
+  bool set_edit_mode(bool enabled);
+  bool edit_mode() const { return _edit_mode; }
+  /** Paint any cell, including garbage or empty, while editing. */
+  bool paint_cell(uint16_t row, uint16_t col, Cell cell);
 
   /**
    * Spawns the next piece from the randomizer.
@@ -199,6 +234,7 @@ private:
   bool _grounded_last_tick = false;
   uint16_t _lock_timer = 0;
   uint16_t _lock_resets_used = 0;
+  uint16_t _lock_reset_limit = 15;
   bool _last_tick_was_player_action = false;
   double _starting_gravity = 0.0;
   double _gravity = 0.0;
@@ -210,10 +246,19 @@ private:
   /** Spin and placement tracking for lock resolution. */
   SpinContext _spin_context;
   std::optional<Placement> _last_successful_placement;
+  std::optional<LockResult> _last_lock_result;
+  uint32_t _soft_drop_cells = 0;
+  uint16_t _hard_drop_cells = 0;
+  bool _edit_mode = false;
 
   /** Pending garbage state processed by tick progression. */
   std::deque<PendingGarbage> _pending_garbage;
   uint16_t _garbage_queue_delay = 0;
+
+  /** Restarts grounded lock timing after a successful player movement. */
+  void on_player_move(bool was_grounded);
+  /** Applies incoming packets whose delay has elapsed. */
+  void apply_ready_garbage();
 
   std::unique_ptr<RotationSystem> _rotation_system;
   std::unique_ptr<Randomizer> _randomizer;

@@ -1,57 +1,18 @@
 # Tetris Engine
 
-This directory contains a headless Tetris engine intended for single-player, multiplayer, and AI move search.
+Headless Tetris engine with configurable boards, gravity, lock delay, bags, spin detection, score/attack tables, garbage, solo goals, and local multiplayer. AI placement generation is intentionally left unimplemented.
 
-## Current Status
-
-- [x] `core/Board.hpp` and `src/core/Board.cpp`
-- [x] `core/Piece.hpp` and `src/core/Piece.cpp`
-- [x] Basic tests for current board and piece behavior
-- [x] Public engine-facing headers for movement, rotation, RNG, spin, score, attack, and engine orchestration
-- [ ] `Engine` runtime logic
-    - [x] Basic spawn, hold, movement, kick-based rotation, ghost, and hard drop
-    - [x] Basic locking and line clears
-    - [ ] Board and active-piece rendering
-    - [ ] Complete gravity, speed increase, and lock delay
-    - [ ] Spin detection, scoring, and attack calculation using the provided rule systems
-    - [ ] Garbage receive, cancellation, and send
-    - [ ] Game-over/top-out handling and full reset
-    - [ ] BFS reachable placements (including hold and kicks) for AI evaluation
-- [ ] Single-player modes (Sprint, Blitz, Marathon)
-- [ ] Configurable input behavior (DAS/ARR, soft drop speed)
-- [ ] Concrete rotation systems such as `SRS`
-- [ ] Concrete randomizers such as `SevenBag`
-- [ ] Concrete spin detection
-- [ ] Concrete scoring rules
-- [ ] Concrete attack tables
-- [ ] Multiplayer match orchestration (garbage routing, KOs, rounds)
-
-## What Needs To Be Done
-
-1. Finish movement and input behavior.
-2. Implement concrete rotation systems in `include/engine/Rotation.hpp`.
-3. Implement concrete randomizers in `include/engine/RNG.hpp`.
-4. Implement concrete spin detectors in `include/engine/Spin.hpp`.
-5. Implement concrete scoring rules in `include/engine/Score.hpp`.
-6. Implement concrete attack rules in `include/engine/Attack.hpp`.
-7. Finish `Engine.cpp` and wire the single-player loop:
-   - spawn
-   - hold
-   - move and rotate
-   - gravity and lock
-   - line clear resolution
-   - score and attack calculation
-   - garbage receive
-   - game-over handling
-8. Extend tests to cover engine behavior once implementations exist.
-9. Add match-level multiplayer support later in a separate API layer.
-
-## Suggested Build Check
-
-From `tetris_engine/`:
+## Build and play
 
 ```sh
 cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
+./build/tetris_qt
 ```
+
+The Qt 6 Widgets app is built when Qt 6 is available (`-DTETRIS_BUILD_QT=OFF` to skip it). Select **Zen**, **Sprint**, **Blitz**, **Custom / Marathon**, or **Local room (2P)**. **Rules…** edits solo and room rules separately; applying them restarts that game. **Keybinds…** changes both players' keys.
+
+Default P1: **A/D/S** move, **W/Q/E** rotate, **C** hold, **Space** drop. Default P2: **←/→/↓** move, **↑/J/K** rotate, **L** hold, **Enter** drop. In solo play, **F** toggles draw mode; select a cell, left-drag to paint, right-drag to erase. **Next round** continues a local match.
+
+The CLI remains available: `./build/tetris_cli --help`. Use `--ticks 600` for a headless smoke test. Both clients run at 60 ticks per second. TETR.IO-like presets are approximations, not verified seasonal rules or networked rooms.

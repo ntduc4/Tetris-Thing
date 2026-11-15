@@ -3,6 +3,8 @@
 #include "core/Piece.hpp"
 
 #include <cstdint>
+#include <deque>
+#include <random>
 #include <vector>
 
 namespace tetris {
@@ -24,10 +26,46 @@ public:
 };
 
 /** Classic 7-bag generator. */
-class SevenBag : public Randomizer {};
+class SevenBag : public Randomizer {
+public:
+  explicit SevenBag(uint64_t seed_value = 0) { seed(seed_value); }
+  void seed(uint64_t seed_value) override;
+  PieceType peek(uint8_t index = 0) const override;
+  std::vector<PieceType> preview(uint8_t amount) const override;
+  PieceType pop() override;
+
+private:
+  void fill(size_t amount) const;
+  mutable std::mt19937_64 _rng;
+  mutable std::deque<PieceType> _queue;
+};
 /** Extended 14-bag generator. */
-class FourteenBag : public Randomizer {};
+class FourteenBag : public Randomizer {
+public:
+  explicit FourteenBag(uint64_t seed_value = 0) { seed(seed_value); }
+  void seed(uint64_t seed_value) override;
+  PieceType peek(uint8_t index = 0) const override;
+  std::vector<PieceType> preview(uint8_t amount) const override;
+  PieceType pop() override;
+
+private:
+  void fill(size_t amount) const;
+  mutable std::mt19937_64 _rng;
+  mutable std::deque<PieceType> _queue;
+};
 /** Fully random piece generator. */
-class Random : public Randomizer {};
+class Random : public Randomizer {
+public:
+  explicit Random(uint64_t seed_value = 0) { seed(seed_value); }
+  void seed(uint64_t seed_value) override;
+  PieceType peek(uint8_t index = 0) const override;
+  std::vector<PieceType> preview(uint8_t amount) const override;
+  PieceType pop() override;
+
+private:
+  void fill(size_t amount) const;
+  mutable std::mt19937_64 _rng;
+  mutable std::deque<PieceType> _queue;
+};
 
 } // namespace tetris

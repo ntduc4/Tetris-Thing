@@ -1,0 +1,73 @@
+#pragma once
+
+#include "BoardWidget.hpp"
+#include "GameConfig.hpp"
+#include "engine/Match.hpp"
+#include "engine/SoloSession.hpp"
+
+#include <QWidget>
+
+#include <array>
+#include <chrono>
+#include <memory>
+
+class QComboBox;
+class QLabel;
+class QPushButton;
+class QTimer;
+
+namespace tetris::qtapp {
+
+enum class Input : int { Left, Right, Down, CW, CCW, Half, Hold, Drop, Count };
+constexpr int InputCount = static_cast<int>(Input::Count);
+using Bindings = std::array<int, InputCount>;
+
+class MainWindow : public QWidget {
+public:
+  explicit MainWindow(QWidget *parent = nullptr);
+  Engine *current_engine(size_t player = 0);
+  const Engine *current_engine(size_t player = 0) const;
+
+protected:
+  bool eventFilter(QObject *watched, QEvent *event) override;
+
+private:
+  struct HeldKeys {
+    std::array<bool, InputCount> down{};
+    int left_ticks = 0;
+    int right_ticks = 0;
+    int last_horizontal = 0;
+  };
+
+  bool is_room() const;
+  void restart();
+  void next_round();
+  void open_rules();
+  void open_bindings();
+  void toggle_edit();
+  void paint(int row, int col, bool erase);
+  void action(size_t player, Input input);
+  void repeat(size_t player, const GameConfig &settings);
+  bool handle_key(int key, bool pressed);
+  void frame();
+  void refresh();
+  void clear_keys();
+
+  GameConfig _solo_rules, _room_rules;
+  Bindings _bindings[2];
+  HeldKeys _held[2];
+  uint64_t _seed = 1;
+  std::unique_ptr<SoloSession> _solo;
+  std::unique_ptr<Match> _match;
+  QComboBox *_mode, *_palette;
+  QPushButton *_edit, *_next;
+  QLabel *_status[2], *_message;
+  QWidget *_panels[2];
+  BoardWidget *_boards[2];
+  QTimer *_timer;
+  std::chrono::steady_clock::time_point _last_frame;
+  std::chrono::nanoseconds _accumulated{};
+  int _edit_row = 19, _edit_col = 5;
+};
+
+} // namespace tetris::qtapp

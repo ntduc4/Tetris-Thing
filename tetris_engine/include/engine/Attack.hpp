@@ -3,6 +3,7 @@
 #include "engine/Spin.hpp"
 
 #include <cstdint>
+#include <array>
 
 namespace tetris {
 
@@ -31,11 +32,39 @@ public:
   virtual uint16_t garbage_to_send(const AttackContext &ctx) const = 0;
 };
 
+/** Configurable base attack, combo, B2B, and perfect-clear values. */
+struct AttackTable {
+  std::array<uint16_t, 5> normal{0, 0, 1, 2, 4};
+  std::array<uint16_t, 5> mini{0, 0, 1, 2, 4};
+  std::array<uint16_t, 5> full{0, 2, 4, 6, 8};
+  uint16_t b2b_bonus = 1;
+  uint16_t perfect_clear_bonus = 5;
+  double combo_multiplier = 0.25;
+};
+
+class TableAttack : public AttackScheme {
+public:
+  explicit TableAttack(AttackTable table = {}) : _table(table) {}
+  uint16_t garbage_to_send(const AttackContext &ctx) const override;
+
+private:
+  AttackTable _table;
+};
+
 /** TETR.IO Season 2 attack table. */
-class TetrioSS2 : public AttackScheme {};
+class TetrioSS2 : public AttackScheme {
+public:
+  uint16_t garbage_to_send(const AttackContext &ctx) const override;
+};
 /** TETR.IO Season 1 attack table. */
-class TetrioSS1 : public AttackScheme {};
+class TetrioSS1 : public AttackScheme {
+public:
+  uint16_t garbage_to_send(const AttackContext &ctx) const override;
+};
 /** Jstris-style attack table. */
-class JSTris : public AttackScheme {};
+class JSTris : public AttackScheme {
+public:
+  uint16_t garbage_to_send(const AttackContext &ctx) const override;
+};
 
 } // namespace tetris

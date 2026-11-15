@@ -3,6 +3,7 @@
 #include "engine/Spin.hpp"
 
 #include <cstdint>
+#include <array>
 
 namespace tetris {
 
@@ -28,10 +29,27 @@ public:
 };
 
 /** Traditional line-clear scoring. */
-class Classical : public ScoreSystem {};
+struct ScoreTable {
+  std::array<uint64_t, 5> normal{0, 100, 300, 500, 800};
+  std::array<uint64_t, 5> mini{100, 200, 400, 800, 1600};
+  std::array<uint64_t, 5> full{400, 800, 1200, 1600, 2600};
+  uint64_t perfect_clear_bonus = 3500;
+  uint64_t combo_bonus = 50;
+  uint16_t hard_drop_point = 2;
+  uint16_t soft_drop_point = 1;
+};
+
+class Classical : public ScoreSystem {
+public:
+  explicit Classical(ScoreTable table = {}) : _table(table) {}
+  uint64_t score(const ScoreEvent &event) const override;
+
+private:
+  ScoreTable _table;
+};
 /** Time-limited score attack rules. */
-class Blitz : public ScoreSystem {};
+class Blitz : public Classical {};
 /** Line-race scoring rules. */
-class Sprint : public ScoreSystem {};
+class Sprint : public Classical {};
 
 } // namespace tetris

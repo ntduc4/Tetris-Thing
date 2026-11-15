@@ -16,19 +16,20 @@ public:
   /** Returns the ordered kick offsets to test for a rotation transition. */
   virtual std::vector<Offset> kick_offsets(PieceType piece, Rotation from,
                                            Rotation to) const = 0;
+  /** A ruleset can disable all rotation, including in-place rotation. */
+  virtual bool allows_rotation() const { return true; }
 };
 
 /** Standard rotation system with wall-kick support. */
 class SRS : public RotationSystem {
 public:
-  std::vector<Offset> kick_offsets(PieceType, Rotation,
-                                   Rotation) const override {
-    return {};
-  }
+  std::vector<Offset> kick_offsets(PieceType piece, Rotation from,
+                                   Rotation to) const override;
 };
 /** Rotation system that rejects all rotations. */
 class None : public RotationSystem {
 public:
+  bool allows_rotation() const override { return false; }
   std::vector<Offset> kick_offsets(PieceType, Rotation,
                                    Rotation) const override {
     return {};

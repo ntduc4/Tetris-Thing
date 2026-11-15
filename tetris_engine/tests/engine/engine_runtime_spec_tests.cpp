@@ -119,7 +119,7 @@ void test_engine_garbage_and_game_over_flow() {
   require(engine.board().get(0, 3) == tetris::Cell::Empty,
           "engine garbage receive should preserve the requested hole column");
 
-  engine.receive_garbage(tetris::GarbageEvent{.lines = 20, .hole_col = 4});
+  engine.receive_garbage(tetris::GarbageEvent{.lines = 24, .hole_col = 4});
   require(engine.board().touch_max_height() || engine.game_over(),
           "engine oversized garbage should eventually top out the board");
 }

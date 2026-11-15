@@ -32,8 +32,21 @@ public:
 };
 
 /** Spin detector that scores all pieces. */
-class AllSpin : public SpinSystem {};
+class AllSpin : public SpinSystem {
+public:
+  explicit AllSpin(bool t_immobile_mini = true)
+      : _t_immobile_mini(t_immobile_mini) {}
+  SpinType detect(const Board &board, const ActivePiece &piece,
+                  const SpinContext &context) const override;
+
+private:
+  bool _t_immobile_mini;
+};
 /** Spin detector that only scores T-spins. */
-class TSpin : public SpinSystem {};
+class TSpin : public SpinSystem {
+public:
+  SpinType detect(const Board &board, const ActivePiece &piece,
+                  const SpinContext &context) const override;
+};
 
 } // namespace tetris
