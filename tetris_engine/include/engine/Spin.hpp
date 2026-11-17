@@ -5,20 +5,14 @@
 #include "core/Piece.hpp"
 #include "engine/Movement.hpp"
 
+#include <memory>
 #include <optional>
+#include <stdexcept>
 
 namespace tetris {
 
 /** Describes the spin classification produced by a lock. */
 enum class SpinType { None, Mini, Full };
-
-/** Carries the move metadata needed to classify spins accurately. */
-struct SpinContext {
-  /** Final board state should be passed separately as an immutable view. */
-  Movement last_movement = Movement::None;
-  /** Which kick test succeeded, when applicable. */
-  std::optional<Offset> kick_offset = std::nullopt;
-};
 
 /** Interface for classifying spin moves at lock time. */
 class SpinSystem {
@@ -28,7 +22,10 @@ public:
 
   /** Detects the spin type for the current piece state. */
   virtual SpinType detect(const Board &board, const ActivePiece &piece,
-                          const SpinContext &context) const = 0;
+                           const SpinContext &context) const = 0;
+  virtual std::unique_ptr<SpinSystem> clone() const {
+    throw std::logic_error("spin system does not support cloning");
+  }
 };
 
 /** Spin detector that scores all pieces. */
@@ -37,7 +34,10 @@ public:
   explicit AllSpin(bool t_immobile_mini = true)
       : _t_immobile_mini(t_immobile_mini) {}
   SpinType detect(const Board &board, const ActivePiece &piece,
-                  const SpinContext &context) const override;
+                   const SpinContext &context) const override;
+  std::unique_ptr<SpinSystem> clone() const override {
+    return std::make_unique<AllSpin>(*this);
+  }
 
 private:
   bool _t_immobile_mini;
@@ -46,7 +46,10 @@ private:
 class TSpin : public SpinSystem {
 public:
   SpinType detect(const Board &board, const ActivePiece &piece,
-                  const SpinContext &context) const override;
+                   const SpinContext &context) const override;
+  std::unique_ptr<SpinSystem> clone() const override {
+    return std::make_unique<TSpin>(*this);
+  }
 };
 
 } // namespace tetris

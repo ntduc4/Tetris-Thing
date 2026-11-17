@@ -5,15 +5,131 @@
 #include "engine/Movement.hpp"
 #include "engine/Spin.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <deque>
 #include <limits>
 #include <numeric>
 #include <optional>
+#include <set>
 #include <stdexcept>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 namespace tetris {
+
+namespace {
+
+bool execute_move(Engine &engine, Movement move) {
+  switch (move) {
+  case Movement::Left: return engine.try_move_left();
+  case Movement::Right: return engine.try_move_right();
+  case Movement::SoftDrop: return engine.try_soft_drop();
+  case Movement::CW: return engine.try_rotate_cw();
+  case Movement::CCW: return engine.try_rotate_ccw();
+  case Movement::HalfRotation: return engine.try_rotate_180();
+  default: return false; // Hard drop is performed once after the recorded path.
+  }
+}
+
+bool rotation_move(Movement move) {
+  return move == Movement::CW || move == Movement::CCW ||
+         move == Movement::HalfRotation;
+}
+
+using SearchKey = std::tuple<int, int, int, int, int, int, int>;
+
+SearchKey search_key(const ActivePiece &piece, const SpinContext &context) {
+  bool rotated = rotation_move(context.last_movement);
+  return {piece.pos.row, piece.pos.col, static_cast<int>(piece.piece.rotation()),
+          rotated ? static_cast<int>(context.last_movement) : 0,
+          rotated && context.kick_offset.has_value(),
+          rotated && context.kick_offset ? context.kick_offset->row : 0,
+          rotated && context.kick_offset ? context.kick_offset->col : 0};
+}
+
+} // namespace
+
+Engine Engine::clone() const {
+  Engine copy(_board, _rotation_system->clone(), _randomizer->clone(),
+              _spin_system ? _spin_system->clone() : nullptr,
+              _score_system ? _score_system->clone() : nullptr,
+              _attack_scheme ? _attack_scheme->clone() : nullptr,
+              _preview_count, _spawn_col_offset, _spawn_row_offset,
+              _starting_gravity, _gravity_increase, _gravity_margin_time,
+              _lock_delay);
+  copy._active_piece = _active_piece;
+  copy._hold_piece = _hold_piece;
+  copy._game_over = _game_over;
+  copy._can_hold = _can_hold;
+  copy._lines_cleared = _lines_cleared;
+  copy._score = _score;
+  copy._combo = _combo;
+  copy._back_to_back = _back_to_back;
+  copy._back_to_back_count = _back_to_back_count;
+  copy._tick_count = _tick_count;
+  copy._gravity_progress = _gravity_progress;
+  copy._grounded_last_tick = _grounded_last_tick;
+  copy._lock_timer = _lock_timer;
+  copy._lock_resets_used = _lock_resets_used;
+  copy._lock_reset_limit = _lock_reset_limit;
+  copy._last_tick_was_player_action = _last_tick_was_player_action;
+  copy._gravity = _gravity;
+  copy._gravity_counter = _gravity_counter;
+  copy._spin_context = _spin_context;
+  copy._last_successful_placement = _last_successful_placement;
+  copy._last_lock_result = _last_lock_result;
+  copy._soft_drop_cells = _soft_drop_cells;
+  copy._hard_drop_cells = _hard_drop_cells;
+  copy._edit_mode = _edit_mode;
+  copy._pending_garbage = _pending_garbage;
+  copy._garbage_queue_delay = _garbage_queue_delay;
+  copy._rule_context = _rule_context;
+  return copy;
+}
+
+void Engine::restore(const Engine &snapshot) {
+  if (this == &snapshot)
+    return;
+  if (_rule_context != snapshot._rule_context)
+    throw std::invalid_argument("restore requires a clone of the same rule context");
+  // Restore the bag and RNG in place: no rule allocations per candidate.
+  _randomizer->restore_from(*snapshot._randomizer);
+  _board = snapshot._board;
+  _active_piece = snapshot._active_piece;
+  _hold_piece = snapshot._hold_piece;
+  _game_over = snapshot._game_over;
+  _can_hold = snapshot._can_hold;
+  _lines_cleared = snapshot._lines_cleared;
+  _score = snapshot._score;
+  _combo = snapshot._combo;
+  _back_to_back = snapshot._back_to_back;
+  _back_to_back_count = snapshot._back_to_back_count;
+  _spawn_col_offset = snapshot._spawn_col_offset;
+  _spawn_row_offset = snapshot._spawn_row_offset;
+  _tick_count = snapshot._tick_count;
+  _gravity_progress = snapshot._gravity_progress;
+  _grounded_last_tick = snapshot._grounded_last_tick;
+  _lock_timer = snapshot._lock_timer;
+  _lock_resets_used = snapshot._lock_resets_used;
+  _lock_reset_limit = snapshot._lock_reset_limit;
+  _last_tick_was_player_action = snapshot._last_tick_was_player_action;
+  _starting_gravity = snapshot._starting_gravity;
+  _gravity = snapshot._gravity;
+  _gravity_counter = snapshot._gravity_counter;
+  _gravity_increase = snapshot._gravity_increase;
+  _gravity_margin_time = snapshot._gravity_margin_time;
+  _lock_delay = snapshot._lock_delay;
+  _spin_context = snapshot._spin_context;
+  _last_successful_placement = snapshot._last_successful_placement;
+  _last_lock_result = snapshot._last_lock_result;
+  _soft_drop_cells = snapshot._soft_drop_cells;
+  _hard_drop_cells = snapshot._hard_drop_cells;
+  _edit_mode = snapshot._edit_mode;
+  _pending_garbage = snapshot._pending_garbage;
+  _garbage_queue_delay = snapshot._garbage_queue_delay;
+}
 
 void Engine::reset(uint64_t seed) {
   _randomizer->seed(seed);
@@ -548,6 +664,7 @@ LockResult Engine::lock_active_piece() {
                          .hard_drop_cells = _hard_drop_cells,
                          .soft_drop_cells = static_cast<uint16_t>(std::min<uint32_t>(
                              _soft_drop_cells, UINT16_MAX))};
+  const uint64_t score_before = _score;
   if (_score_system)
     _score += _score_system->score(score_event);
   std::vector<uint16_t> outgoing_packets;
@@ -586,12 +703,13 @@ LockResult Engine::lock_active_piece() {
   _soft_drop_cells = 0;
   _hard_drop_cells = 0;
   LockResult result{.game_over = _game_over,
-          .lines_cleared = lc,
-          .perfect_clear = perfect_clear,
-          .spin = spin,
-          .attack_sent = outgoing,
-          .locked = true,
-          .attack_packets = std::move(outgoing_packets)};
+                    .lines_cleared = lc,
+                    .perfect_clear = perfect_clear,
+                    .spin = spin,
+                    .attack_sent = outgoing,
+                    .locked = true,
+                    .attack_packets = std::move(outgoing_packets),
+                    .score_delta = _score - score_before};
   _last_lock_result = result;
   return result;
 }
@@ -627,11 +745,143 @@ void Engine::apply_ready_garbage() {
 }
 
 std::vector<Placement> Engine::generate_active_piece_placement() const {
-  return {};
+  return search_placements(false);
 }
 
 std::vector<Placement> Engine::generate_hold_piece_placement() const {
-  return {};
+  return search_placements(true);
+}
+
+std::vector<Placement> Engine::search_placements(bool use_hold) const {
+  if (_game_over || _edit_mode || !_active_piece || (use_hold && !_can_hold))
+    return {};
+  Engine scratch = clone();
+  if (use_hold && !scratch.hold())
+    return {};
+
+  struct Node {
+    ActivePiece piece;
+    SpinContext spin;
+    uint32_t soft_drop_cells;
+    std::vector<Movement> moves;
+  };
+  std::deque<Node> queue;
+  std::set<SearchKey> visited, endpoints;
+  queue.push_back({*scratch._active_piece, scratch._spin_context,
+                   scratch._soft_drop_cells, {}});
+  visited.insert(search_key(queue.front().piece, queue.front().spin));
+  std::vector<Placement> placements;
+  constexpr std::array moves = {Movement::Left, Movement::Right,
+                                Movement::SoftDrop, Movement::CW,
+                                Movement::CCW, Movement::HalfRotation};
+
+  while (!queue.empty()) {
+    Node node = std::move(queue.front());
+    queue.pop_front();
+    scratch._active_piece = node.piece;
+    scratch._spin_context = node.spin;
+    auto ghost = scratch.ghost_piece();
+    if (!ghost)
+      throw std::logic_error("reachable piece has no valid hard drop");
+    const uint16_t distance = node.piece.pos.row - ghost->pos.row;
+    SpinContext at_lock = distance ? SpinContext{Movement::HardDrop, std::nullopt}
+                                   : node.spin;
+    if (endpoints.insert(search_key(*ghost, at_lock)).second) {
+      placements.push_back({.moves = node.moves,
+                            .type = ghost->piece.type(),
+                            .final_pos = ghost->pos,
+                            .final_rotation = ghost->piece.rotation(),
+                            .use_hold = use_hold,
+                            .drop_distance = distance,
+                            .spin_context = at_lock});
+    }
+
+    for (Movement move : moves) {
+      scratch._active_piece = node.piece;
+      scratch._spin_context = node.spin;
+      scratch._soft_drop_cells = node.soft_drop_cells;
+      scratch._grounded_last_tick = false;
+      scratch._lock_timer = scratch._lock_resets_used = 0;
+      scratch._last_tick_was_player_action = false;
+      if (!execute_move(scratch, move))
+        continue;
+      SearchKey key = search_key(*scratch._active_piece, scratch._spin_context);
+      if (visited.insert(key).second) {
+        auto path = node.moves;
+        path.push_back(move);
+        queue.push_back({*scratch._active_piece, scratch._spin_context,
+                         scratch._soft_drop_cells, std::move(path)});
+      }
+    }
+  }
+  return placements;
+}
+
+LockResult Engine::apply_placement(const Placement &placement) {
+  if (_game_over || _edit_mode || !_active_piece)
+    throw std::invalid_argument("cannot place without a live active piece");
+
+  // Only the active/hold/RNG and movement metadata can change before the lock.
+  // Keep the board untouched until validation succeeds; bad actions roll back
+  // without cloning the rules or the board on every placement.
+  const auto active = _active_piece;
+  const auto held = _hold_piece;
+  const bool can_hold_before = _can_hold;
+  const auto spin = _spin_context;
+  const auto soft_drop = _soft_drop_cells;
+  const auto hard_drop_cells_before = _hard_drop_cells;
+  const auto gravity_counter = _gravity_counter;
+  const auto grounded = _grounded_last_tick;
+  const auto timer = _lock_timer;
+  const auto resets = _lock_resets_used;
+  const auto last_action = _last_tick_was_player_action;
+  auto random_before = placement.use_hold ? _randomizer->clone() : nullptr;
+  if (random_before)
+    _randomizer->restore_from(*random_before); // Reject unsupported custom RNGs first.
+
+  auto rollback = [&] {
+    _active_piece = active;
+    _hold_piece = held;
+    _can_hold = can_hold_before;
+    _spin_context = spin;
+    _soft_drop_cells = soft_drop;
+    _hard_drop_cells = hard_drop_cells_before;
+    _gravity_counter = gravity_counter;
+    _grounded_last_tick = grounded;
+    _lock_timer = timer;
+    _lock_resets_used = resets;
+    _last_tick_was_player_action = last_action;
+    if (random_before)
+      _randomizer->restore_from(*random_before);
+  };
+  try {
+    if (placement.use_hold && !hold())
+      throw std::invalid_argument("hold is unavailable");
+    if (_active_piece->piece.type() != placement.type)
+      throw std::invalid_argument("placement piece type does not match");
+    for (Movement move : placement.moves)
+      if (!execute_move(*this, move))
+        throw std::invalid_argument("placement has an illegal movement");
+
+    auto ghost = ghost_piece();
+    if (!ghost || ghost->pos != placement.final_pos ||
+        ghost->piece.rotation() != placement.final_rotation ||
+        hard_drop_distance() != placement.drop_distance)
+      throw std::invalid_argument("placement final position does not match path");
+    SpinContext context = placement.drop_distance
+                              ? SpinContext{Movement::HardDrop, std::nullopt}
+                              : _spin_context;
+    if (context != placement.spin_context)
+      throw std::invalid_argument("placement spin context does not match path");
+  } catch (...) {
+    rollback();
+    throw;
+  }
+
+  LockResult result = hard_drop();
+  if (!result.locked)
+    throw std::logic_error("valid placement failed to lock");
+  return result;
 }
 
 } // namespace tetris

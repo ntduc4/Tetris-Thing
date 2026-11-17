@@ -28,6 +28,8 @@ def main() -> None:
     config.gravity = 0
     config.attack = t.AttackRule.Off
     game = t.Engine(config)
+    if not hasattr(t, "Placement") or not hasattr(game, "generate_active_piece_placement"):
+        raise RuntimeError("Placement bindings are missing; run `make -C tetris_engine ai-setup`")
 
     def trace() -> tuple:
         game.reset(42)
@@ -44,6 +46,16 @@ def main() -> None:
         raise RuntimeError("Unexpected engine board or preview defaults")
     if trace() != trace():
         raise RuntimeError("Engine reset(seed) did not reproduce the same transition")
+    checkpoint = game.clone()
+    placements = game.generate_active_piece_placement()
+    if not placements:
+        raise RuntimeError("Engine did not generate any reachable placements")
+    lock = game.apply_placement(placements[0])
+    if not lock.locked or lock.score_delta != game.score - checkpoint.score:
+        raise RuntimeError("Placement replay did not produce a measured lock")
+    game.restore(checkpoint)
+    if game.board.render() != checkpoint.board.render() or game.preview_queue() != checkpoint.preview_queue():
+        raise RuntimeError("Placement restore did not recover board and RNG/queue")
 
     if torch.version.hip is None or not torch.cuda.is_available():
         raise RuntimeError("ROCm PyTorch GPU unavailable; check rocminfo and the Poetry ROCm wheel")
@@ -58,7 +70,7 @@ def main() -> None:
     print(f"Python {sys.version.split()[0]} | NumPy {np.__version__} | marimo {marimo.__version__}")
     print(f"PyTorch {torch.__version__} | ROCm {torch.version.hip} | {torch.cuda.get_device_name(0)}")
     print(f"tetris_py {t.__file__} | seeded engine reset/lock/respawn OK")
-    print("Training runtime ready; placement enumeration and the RL adapter are not implemented yet.")
+    print(f"Runtime ready; {len(placements)} active placements, replay and RNG restore OK.")
 
 
 if __name__ == "__main__":

@@ -4,7 +4,9 @@
 
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 namespace tetris {
@@ -23,6 +25,14 @@ public:
   virtual std::vector<PieceType> preview(uint8_t amount) const = 0;
   /** Consumes and returns the next piece in sequence. */
   virtual PieceType pop() = 0;
+  /** Deep copy, including RNG and queued pieces. Custom randomizers must override. */
+  virtual std::unique_ptr<Randomizer> clone() const {
+    throw std::logic_error("randomizer does not support cloning");
+  }
+  /** Copy RNG/queue into an existing randomizer of the same type. */
+  virtual void restore_from(const Randomizer &) {
+    throw std::logic_error("randomizer does not support restoring");
+  }
 };
 
 /** Classic 7-bag generator. */
@@ -33,6 +43,14 @@ public:
   PieceType peek(uint8_t index = 0) const override;
   std::vector<PieceType> preview(uint8_t amount) const override;
   PieceType pop() override;
+  std::unique_ptr<Randomizer> clone() const override {
+    return std::make_unique<SevenBag>(*this);
+  }
+  void restore_from(const Randomizer &other) override {
+    auto source = dynamic_cast<const SevenBag *>(&other);
+    if (!source) throw std::invalid_argument("incompatible randomizer snapshot");
+    *this = *source;
+  }
 
 private:
   void fill(size_t amount) const;
@@ -47,6 +65,14 @@ public:
   PieceType peek(uint8_t index = 0) const override;
   std::vector<PieceType> preview(uint8_t amount) const override;
   PieceType pop() override;
+  std::unique_ptr<Randomizer> clone() const override {
+    return std::make_unique<FourteenBag>(*this);
+  }
+  void restore_from(const Randomizer &other) override {
+    auto source = dynamic_cast<const FourteenBag *>(&other);
+    if (!source) throw std::invalid_argument("incompatible randomizer snapshot");
+    *this = *source;
+  }
 
 private:
   void fill(size_t amount) const;
@@ -61,6 +87,14 @@ public:
   PieceType peek(uint8_t index = 0) const override;
   std::vector<PieceType> preview(uint8_t amount) const override;
   PieceType pop() override;
+  std::unique_ptr<Randomizer> clone() const override {
+    return std::make_unique<Random>(*this);
+  }
+  void restore_from(const Randomizer &other) override {
+    auto source = dynamic_cast<const Random *>(&other);
+    if (!source) throw std::invalid_argument("incompatible randomizer snapshot");
+    *this = *source;
+  }
 
 private:
   void fill(size_t amount) const;

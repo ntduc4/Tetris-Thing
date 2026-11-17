@@ -56,7 +56,8 @@ public:
   void reset();
 
 private:
-  const uint16_t _width, _height;
+  // Stored with the cells so a full engine snapshot can be restored by assignment.
+  uint16_t _width, _height;
   std::vector<Cell> _cells;
   bool _touch_max_height = false;
 

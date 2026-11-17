@@ -147,6 +147,11 @@ target_link_libraries(tetris_engine_rotation_variants_tests PRIVATE tetris_engin
 target_include_directories(tetris_engine_rotation_variants_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_test(NAME tetris_engine_rotation_variants_tests COMMAND tetris_engine_rotation_variants_tests)
 
+add_executable(tetris_engine_placement_search_tests tests/engine/placement_search_tests.cpp)
+target_link_libraries(tetris_engine_placement_search_tests PRIVATE tetris_engine)
+target_include_directories(tetris_engine_placement_search_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+add_test(NAME tetris_engine_placement_search_tests COMMAND tetris_engine_placement_search_tests)
+
 if(TARGET tetris_qt_widgets)
     find_package(Qt6 QUIET COMPONENTS Test)
     if(Qt6Test_FOUND)

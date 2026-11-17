@@ -60,6 +60,8 @@ struct LockResult {
   uint16_t attack_sent = 0;
   bool locked = false;
   std::vector<uint16_t> attack_packets;
+  /** Score awarded by this lock, including hard/soft drop points. */
+  uint64_t score_delta = 0;
 };
 
 /**
@@ -107,6 +109,11 @@ public:
 
   /** Resets engine state and reseeds the piece source. */
   void reset(uint64_t seed = 0);
+
+  /** Independent copy of the current state, rules, RNG/bag, and queue. */
+  Engine clone() const;
+  /** Cheap in-place state/RNG restore from a clone with the same rule context. */
+  void restore(const Engine &snapshot);
 
   /** Returns the current board state. */
   const Board &board() const { return _board; }
@@ -164,12 +171,15 @@ public:
   void set_garbage_delay(uint16_t ticks) { _garbage_queue_delay = ticks; }
   void set_spin_system(std::unique_ptr<SpinSystem> system) {
     _spin_system = std::move(system);
+    _rule_context = std::make_shared<int>(0);
   }
   void set_score_system(std::unique_ptr<ScoreSystem> system) {
     _score_system = std::move(system);
+    _rule_context = std::make_shared<int>(0);
   }
   void set_attack_scheme(std::unique_ptr<AttackScheme> scheme) {
     _attack_scheme = std::move(scheme);
+    _rule_context = std::make_shared<int>(0);
   }
 
   /** Pause play to paint board cells. Exiting fails while the piece collides. */
@@ -225,12 +235,15 @@ public:
   /** Adds an incoming garbage packet. */
   void receive_garbage(const GarbageEvent &garbage);
 
-  /** Generates all possible placements for the active piece. */
+  /** Reachable hard-drop placements without hold; actions execute before any tick. */
   std::vector<Placement> generate_active_piece_placement() const;
-  /** Generates all possible placements for the held piece. */
+  /** Reachable hard-drop placements after a legal hold. */
   std::vector<Placement> generate_hold_piece_placement() const;
+  /** Atomically replay and lock a validated placement; does not spawn next piece. */
+  LockResult apply_placement(const Placement &placement);
 
 private:
+  // When adding runtime state, update clone() and restore() together.
   Board _board;
   std::optional<ActivePiece> _active_piece;
   std::optional<PieceType> _hold_piece;
@@ -275,12 +288,14 @@ private:
   void on_player_move(bool was_grounded);
   /** Applies up to 8 ready lines in packet order after a non-clearing lock. */
   void apply_ready_garbage();
+  std::vector<Placement> search_placements(bool use_hold) const;
 
   std::unique_ptr<RotationSystem> _rotation_system;
   std::unique_ptr<Randomizer> _randomizer;
   std::unique_ptr<SpinSystem> _spin_system;
   std::unique_ptr<ScoreSystem> _score_system;
   std::unique_ptr<AttackScheme> _attack_scheme;
+  std::shared_ptr<const int> _rule_context = std::make_shared<int>(0);
 
   uint8_t _preview_count;
 };

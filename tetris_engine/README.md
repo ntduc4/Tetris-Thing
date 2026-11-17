@@ -1,6 +1,6 @@
 # Tetris Engine
 
-Headless Tetris engine with configurable boards, gravity, lock delay, bags, spin detection, score/attack tables, garbage, solo goals, and local multiplayer. AI placement generation is intentionally left unimplemented.
+Headless Tetris engine with configurable boards, gravity, lock delay, bags, spin detection, score/attack tables, garbage, solo goals, local multiplayer, and turn-based AI placement search.
 
 ## Build and play
 
@@ -21,7 +21,7 @@ The CLI remains available: `./build/tetris_cli --help`. Use `--ticks 600` for a 
 
 Install `pybind11` for the same Python interpreter used by CMake (`python3 -m pip install pybind11`), then build normally. The optional `tetris_py` module has no Qt dependency (`-DTETRIS_BUILD_PYTHON=OFF` skips it). From this directory:
 
-`make python` builds the module, `make test-python` tests it, and `make ai` builds it and runs `../tetris_ai/main.py` with the right `PYTHONPATH` (or use `make -C tetris_engine ai` from the repository root). `make run-cli` and `make run-qt` launch the other clients.
+`make python` builds the module and `make test-python` tests it. From the repository root, `make -C tetris_engine ai-setup` installs the Poetry training dependencies, builds the binding for that interpreter and checks ROCm; `make -C tetris_engine ai` opens the marimo notebook. `make run-cli` and `make run-qt` launch the other clients.
 
 ```sh
 PYTHONPATH=build python3 - <<'PY'
@@ -35,4 +35,8 @@ game.spawn_next_piece()  # Engine does not spawn automatically after a lock.
 PY
 ```
 
-`Engine` exposes actions, board/queue snapshots, garbage, and rule configuration; `SoloSession` and `Match` expose seeded starts and automatic spawns. Board row 0 is the bottom. AI placement methods remain unimplemented.
+`Engine` exposes actions, board/queue snapshots, garbage, and rule configuration; `SoloSession` and `Match` expose seeded starts and automatic spawns. Board row 0 is the bottom.
+
+For turn-based AI decisions, `generate_active_piece_placement()` and `generate_hold_piece_placement()` return reachable, replayable `Placement` objects (hold flag, final pose, spin context, and movement path). `apply_placement(action)` validates and locks one, returning `LockResult` with lines, spin, attack and `score_delta`; it does **not** spawn the next piece. The search uses zero ticks: gravity, garbage travel and input timing are outside this MVP.
+
+To examine outcomes without changing the live game, call `snapshot = game.clone()` once, `working = game.clone()` once, then for each candidate `working.restore(snapshot)` and `result = working.apply_placement(candidate)`. Restore copies board/RNG/queue/state into the existing engine without reallocating rule systems; it only accepts a clone of the same rule context. Post-lock `working.board` and `result` can feed a later observation encoder. Do not supply snapshot RNG or future unseen pieces to the policy; spawning on a seeded clone reveals hidden information. Custom randomizers need `clone()` and `restore_from()` to support this API; custom rule strategies need `clone()`.

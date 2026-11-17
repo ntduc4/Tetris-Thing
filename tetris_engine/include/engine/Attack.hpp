@@ -5,6 +5,8 @@
 
 #include <cstdint>
 #include <array>
+#include <memory>
+#include <stdexcept>
 #include <vector>
 
 namespace tetris {
@@ -43,6 +45,9 @@ public:
   virtual uint32_t surge_charge(uint32_t) const { return 0; }
   virtual bool perfect_clear_keeps_b2b() const { return false; }
   virtual bool no_line_spin_keeps_b2b(SpinType, PieceType) const { return false; }
+  virtual std::unique_ptr<AttackScheme> clone() const {
+    throw std::logic_error("attack scheme does not support cloning");
+  }
 };
 
 /** Configurable base attack, combo, B2B, and perfect-clear values. */
@@ -59,6 +64,9 @@ class TableAttack : public AttackScheme {
 public:
   explicit TableAttack(AttackTable table = {}) : _table(table) {}
   uint16_t garbage_to_send(const AttackContext &ctx) const override;
+  std::unique_ptr<AttackScheme> clone() const override {
+    return std::make_unique<TableAttack>(*this);
+  }
 
 private:
   AttackTable _table;
@@ -74,16 +82,25 @@ public:
   bool no_line_spin_keeps_b2b(SpinType spin, PieceType piece) const override {
     return spin == SpinType::Mini && piece != PieceType::T;
   }
+  std::unique_ptr<AttackScheme> clone() const override {
+    return std::make_unique<TetrioSS2>(*this);
+  }
 };
 /** TETR.IO Season 1 attack table. */
 class TetrioSS1 : public AttackScheme {
 public:
   uint16_t garbage_to_send(const AttackContext &ctx) const override;
+  std::unique_ptr<AttackScheme> clone() const override {
+    return std::make_unique<TetrioSS1>(*this);
+  }
 };
 /** Jstris-style attack table. */
 class JSTris : public AttackScheme {
 public:
   uint16_t garbage_to_send(const AttackContext &ctx) const override;
+  std::unique_ptr<AttackScheme> clone() const override {
+    return std::make_unique<JSTris>(*this);
+  }
 };
 
 } // namespace tetris

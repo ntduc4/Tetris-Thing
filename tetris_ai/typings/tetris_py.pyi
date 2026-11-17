@@ -4,7 +4,7 @@ Headless Tetris engine bindings (board rows start at the bottom)
 from __future__ import annotations
 import collections.abc
 import typing
-__all__: list[str] = ['ActivePiece', 'AttackRule', 'AttackTable', 'BagRule', 'Board', 'Cell', 'Engine', 'EngineConfig', 'GarbageEvent', 'LockResult', 'Match', 'Offset', 'PendingGarbage', 'Piece', 'PieceType', 'Position', 'Rotation', 'RotationRule', 'ScoreTable', 'SoloMode', 'SoloSession', 'SoloSettings', 'SpinRule', 'SpinType', 'TickResult']
+__all__: list[str] = ['ActivePiece', 'AttackRule', 'AttackTable', 'BagRule', 'Board', 'Cell', 'Engine', 'EngineConfig', 'GarbageEvent', 'LockResult', 'Match', 'Movement', 'Offset', 'PendingGarbage', 'Piece', 'PieceType', 'Placement', 'Position', 'Rotation', 'RotationRule', 'ScoreTable', 'SoloMode', 'SoloSession', 'SoloSettings', 'SpinContext', 'SpinRule', 'SpinType', 'TickResult']
 class Cell:
     """
     Members:
@@ -169,6 +169,72 @@ class Rotation:
         ...
     @typing.overload
     def __ne__(self, other: Rotation) -> bool:
+        ...
+    @typing.overload
+    def __ne__(self, other: typing.Any) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setstate__(self, state: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __str__(self) -> str:
+        ...
+    @property
+    def name(self) -> str:
+        ...
+    @property
+    def value(self) -> int:
+        ...
+class Movement:
+    """
+    Members:
+
+      None_
+
+      Left
+
+      Right
+
+      SoftDrop
+
+      HardDrop
+
+      CW
+
+      CCW
+
+      HalfRotation
+
+      Gravity
+    """
+    CCW: typing.ClassVar[Movement]
+    CW: typing.ClassVar[Movement]
+    Gravity: typing.ClassVar[Movement]
+    HalfRotation: typing.ClassVar[Movement]
+    HardDrop: typing.ClassVar[Movement]
+    Left: typing.ClassVar[Movement]
+    None_: typing.ClassVar[Movement]
+    Right: typing.ClassVar[Movement]
+    SoftDrop: typing.ClassVar[Movement]
+    __members__: typing.ClassVar[dict[str, Movement]]
+    @typing.overload
+    def __eq__(self, other: Movement) -> bool:
+        ...
+    @typing.overload
+    def __eq__(self, other: typing.Any) -> bool:
+        ...
+    def __getstate__(self) -> int:
+        ...
+    def __hash__(self) -> int:
+        ...
+    def __index__(self) -> int:
+        ...
+    def __init__(self, value: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def __int__(self) -> int:
+        ...
+    @typing.overload
+    def __ne__(self, other: Movement) -> bool:
         ...
     @typing.overload
     def __ne__(self, other: typing.Any) -> bool:
@@ -646,6 +712,38 @@ class Offset:
     @property
     def row(self) -> int:
         ...
+class SpinContext:
+    @property
+    def kick_offset(self) -> Offset | None:
+        ...
+    @property
+    def last_movement(self) -> Movement:
+        ...
+class Placement:
+    """
+    Engine-generated placement with its final pose and recorded movement path.
+    """
+    @property
+    def drop_distance(self) -> int:
+        ...
+    @property
+    def final_pos(self) -> Position:
+        ...
+    @property
+    def final_rotation(self) -> Rotation:
+        ...
+    @property
+    def moves(self) -> list[Movement]:
+        ...
+    @property
+    def spin_context(self) -> SpinContext:
+        ...
+    @property
+    def type(self) -> PieceType:
+        ...
+    @property
+    def use_hold(self) -> bool:
+        ...
 class Piece:
     def current_shape(self) -> list[Offset]:
         ...
@@ -720,6 +818,9 @@ class LockResult:
     def perfect_clear(self) -> bool:
         ...
     @property
+    def score_delta(self) -> int:
+        ...
+    @property
     def spin(self) -> SpinType:
         ...
 class TickResult:
@@ -747,6 +848,22 @@ class Engine:
     """
     def __init__(self, config: EngineConfig = ...) -> None:
         ...
+    def apply_placement(self, placement: Placement) -> LockResult:
+        """
+        Validate and atomically lock a placement without spawning the next piece.
+        """
+    def clone(self) -> Engine:
+        """
+        Independent engine copy, including RNG and hidden bag state. Keep it out of model inputs.
+        """
+    def generate_active_piece_placement(self) -> list[Placement]:
+        """
+        Reachable hard-drop placements for the active piece.
+        """
+    def generate_hold_piece_placement(self) -> list[Placement]:
+        """
+        Reachable hard-drop placements after hold.
+        """
     def hard_drop(self) -> LockResult:
         ...
     def hard_drop_distance(self) -> int:
@@ -775,6 +892,10 @@ class Engine:
         """
     def reset(self, seed: typing.SupportsInt | typing.SupportsIndex = 0) -> None:
         ...
+    def restore(self, snapshot: Engine) -> None:
+        """
+        Restore in place from a clone with the same rule context, including RNG.
+        """
     def set_edit_mode(self, arg0: bool) -> bool:
         ...
     def set_garbage_delay(self, arg0: typing.SupportsInt | typing.SupportsIndex) -> None:

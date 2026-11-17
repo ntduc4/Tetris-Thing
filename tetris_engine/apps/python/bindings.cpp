@@ -117,6 +117,12 @@ PYBIND11_MODULE(tetris_py, m) {
   py::enum_<Rotation>(m, "Rotation")
       .value("North", Rotation::North).value("East", Rotation::East)
       .value("South", Rotation::South).value("West", Rotation::West);
+  py::enum_<Movement>(m, "Movement")
+      .value("None_", Movement::None).value("Left", Movement::Left)
+      .value("Right", Movement::Right).value("SoftDrop", Movement::SoftDrop)
+      .value("HardDrop", Movement::HardDrop).value("CW", Movement::CW)
+      .value("CCW", Movement::CCW).value("HalfRotation", Movement::HalfRotation)
+      .value("Gravity", Movement::Gravity);
   py::enum_<SpinType>(m, "SpinType")
       .value("None_", SpinType::None).value("Mini", SpinType::Mini)
       .value("Full", SpinType::Full);
@@ -177,6 +183,18 @@ PYBIND11_MODULE(tetris_py, m) {
       .def_readonly("row", &Position::row).def_readonly("col", &Position::col);
   py::class_<Offset>(m, "Offset")
       .def_readonly("row", &Offset::row).def_readonly("col", &Offset::col);
+  py::class_<SpinContext>(m, "SpinContext")
+      .def_readonly("last_movement", &SpinContext::last_movement)
+      .def_readonly("kick_offset", &SpinContext::kick_offset);
+  py::class_<Placement>(m, "Placement",
+      "Engine-generated placement with its final pose and recorded movement path.")
+      .def_readonly("moves", &Placement::moves)
+      .def_readonly("type", &Placement::type)
+      .def_readonly("final_pos", &Placement::final_pos)
+      .def_readonly("final_rotation", &Placement::final_rotation)
+      .def_readonly("use_hold", &Placement::use_hold)
+      .def_readonly("drop_distance", &Placement::drop_distance)
+      .def_readonly("spin_context", &Placement::spin_context);
   py::class_<Piece>(m, "Piece")
       .def_property_readonly("type", &Piece::type)
       .def_property_readonly("rotation", &Piece::rotation)
@@ -211,7 +229,8 @@ PYBIND11_MODULE(tetris_py, m) {
       .def_readonly("perfect_clear", &LockResult::perfect_clear)
       .def_readonly("spin", &LockResult::spin)
       .def_readonly("attack_sent", &LockResult::attack_sent)
-      .def_readonly("attack_packets", &LockResult::attack_packets);
+      .def_readonly("attack_packets", &LockResult::attack_packets)
+      .def_readonly("score_delta", &LockResult::score_delta);
   py::class_<TickResult>(m, "TickResult")
       .def_readonly("moved_down", &TickResult::moved_down)
       .def_readonly("locked", &TickResult::locked)
@@ -226,6 +245,11 @@ PYBIND11_MODULE(tetris_py, m) {
         return std::make_unique<Engine>(make_engine(config));
       }), py::arg("config") = EngineConfig{})
       .def("reset", &Engine::reset, py::arg("seed") = 0)
+      .def("clone", [](const Engine &engine) {
+        return std::make_unique<Engine>(engine.clone());
+      }, "Independent engine copy, including RNG and hidden bag state. Keep it out of model inputs.")
+      .def("restore", &Engine::restore, py::arg("snapshot"),
+           "Restore in place from a clone with the same rule context, including RNG.")
       .def("spawn_next_piece", &Engine::spawn_next_piece,
            py::arg("clutch_clear") = false)
       .def("hold", &Engine::hold, py::arg("ignore_hold") = false)
@@ -253,6 +277,12 @@ PYBIND11_MODULE(tetris_py, m) {
       .def("receive_garbage", py::overload_cast<const GarbageEvent &>(
            &Engine::receive_garbage), py::arg("event"))
       .def("preview_queue", &Engine::preview_queue)
+      .def("generate_active_piece_placement", &Engine::generate_active_piece_placement,
+           "Reachable hard-drop placements for the active piece.")
+      .def("generate_hold_piece_placement", &Engine::generate_hold_piece_placement,
+           "Reachable hard-drop placements after hold.")
+      .def("apply_placement", &Engine::apply_placement, py::arg("placement"),
+           "Validate and atomically lock a placement without spawning the next piece.")
       .def("render", &Engine::render,
            "Board copy with the active piece overlaid; row zero is the bottom.")
       .def_property_readonly("board", &Engine::board, py::return_value_policy::reference_internal)

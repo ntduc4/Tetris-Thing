@@ -4,6 +4,8 @@
 
 #include <cstdint>
 #include <array>
+#include <memory>
+#include <stdexcept>
 
 namespace tetris {
 
@@ -26,6 +28,9 @@ public:
 
   /** Returns the score value awarded for a scoring event. */
   virtual uint64_t score(const ScoreEvent &event) const = 0;
+  virtual std::unique_ptr<ScoreSystem> clone() const {
+    throw std::logic_error("score system does not support cloning");
+  }
 };
 
 /** Traditional line-clear scoring. */
@@ -43,13 +48,26 @@ class Classical : public ScoreSystem {
 public:
   explicit Classical(ScoreTable table = {}) : _table(table) {}
   uint64_t score(const ScoreEvent &event) const override;
+  std::unique_ptr<ScoreSystem> clone() const override {
+    return std::make_unique<Classical>(*this);
+  }
 
 private:
   ScoreTable _table;
 };
 /** Time-limited score attack rules. */
-class Blitz : public Classical {};
+class Blitz : public Classical {
+public:
+  std::unique_ptr<ScoreSystem> clone() const override {
+    return std::make_unique<Blitz>(*this);
+  }
+};
 /** Line-race scoring rules. */
-class Sprint : public Classical {};
+class Sprint : public Classical {
+public:
+  std::unique_ptr<ScoreSystem> clone() const override {
+    return std::make_unique<Sprint>(*this);
+  }
+};
 
 } // namespace tetris
