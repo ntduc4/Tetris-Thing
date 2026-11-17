@@ -194,7 +194,9 @@ PYBIND11_MODULE(tetris_py, m) {
       .def_readonly("final_rotation", &Placement::final_rotation)
       .def_readonly("use_hold", &Placement::use_hold)
       .def_readonly("drop_distance", &Placement::drop_distance)
-      .def_readonly("spin_context", &Placement::spin_context);
+      .def_readonly("spin_context", &Placement::spin_context)
+      .def("cells", &Placement::cells,
+           "Four landing cells before line clearing, in board row/column coordinates.");
   py::class_<Piece>(m, "Piece")
       .def_property_readonly("type", &Piece::type)
       .def_property_readonly("rotation", &Piece::rotation)

@@ -723,6 +723,10 @@ class Placement:
     """
     Engine-generated placement with its final pose and recorded movement path.
     """
+    def cells(self) -> list[Position]:
+        """
+        Four landing cells before line clearing, in board row/column coordinates.
+        """
     @property
     def drop_distance(self) -> int:
         ...

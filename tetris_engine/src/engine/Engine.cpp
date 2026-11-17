@@ -29,7 +29,7 @@ bool execute_move(Engine &engine, Movement move) {
   case Movement::CW: return engine.try_rotate_cw();
   case Movement::CCW: return engine.try_rotate_ccw();
   case Movement::HalfRotation: return engine.try_rotate_180();
-  default: return false; // Hard drop is performed once after the recorded path.
+  default: return false; // The terminal hard drop is validated separately.
   }
 }
 
@@ -39,6 +39,7 @@ bool rotation_move(Movement move) {
 }
 
 using SearchKey = std::tuple<int, int, int, int, int, int, int>;
+using PlacementKey = std::tuple<int, int, int, SpinType>;
 
 SearchKey search_key(const ActivePiece &piece, const SpinContext &context) {
   bool rotated = rotation_move(context.last_movement);
@@ -766,7 +767,8 @@ std::vector<Placement> Engine::search_placements(bool use_hold) const {
     std::vector<Movement> moves;
   };
   std::deque<Node> queue;
-  std::set<SearchKey> visited, endpoints;
+  std::set<SearchKey> visited;
+  std::set<PlacementKey> endpoints;
   queue.push_back({*scratch._active_piece, scratch._spin_context,
                    scratch._soft_drop_cells, {}});
   visited.insert(search_key(queue.front().piece, queue.front().spin));
@@ -786,14 +788,24 @@ std::vector<Placement> Engine::search_placements(bool use_hold) const {
     const uint16_t distance = node.piece.pos.row - ghost->pos.row;
     SpinContext at_lock = distance ? SpinContext{Movement::HardDrop, std::nullopt}
                                    : node.spin;
-    if (endpoints.insert(search_key(*ghost, at_lock)).second) {
-      placements.push_back({.moves = node.moves,
+    SpinType effective_spin =
+        scratch._spin_system
+            ? scratch._spin_system->detect(scratch._board, *ghost, at_lock)
+            : SpinType::None;
+    // Different kick/rotation paths may produce the same lock result. Keep
+    // one per actual spin outcome, but never merge a mini with a non-spin.
+    if (endpoints.insert({ghost->pos.row, ghost->pos.col,
+                          static_cast<int>(ghost->piece.rotation()),
+                          effective_spin}).second) {
+      auto path = node.moves;
+      path.push_back(Movement::HardDrop);
+      placements.push_back({.moves = std::move(path),
                             .type = ghost->piece.type(),
                             .final_pos = ghost->pos,
                             .final_rotation = ghost->piece.rotation(),
                             .use_hold = use_hold,
                             .drop_distance = distance,
-                            .spin_context = at_lock});
+                            .spin_context = node.spin});
     }
 
     for (Movement move : moves) {
@@ -859,8 +871,11 @@ LockResult Engine::apply_placement(const Placement &placement) {
       throw std::invalid_argument("hold is unavailable");
     if (_active_piece->piece.type() != placement.type)
       throw std::invalid_argument("placement piece type does not match");
-    for (Movement move : placement.moves)
-      if (!execute_move(*this, move))
+    if (placement.moves.empty() ||
+        placement.moves.back() != Movement::HardDrop)
+      throw std::invalid_argument("placement must end with a hard drop");
+    for (size_t i = 0; i + 1 < placement.moves.size(); ++i)
+      if (!execute_move(*this, placement.moves[i]))
         throw std::invalid_argument("placement has an illegal movement");
 
     auto ghost = ghost_piece();
@@ -868,11 +883,8 @@ LockResult Engine::apply_placement(const Placement &placement) {
         ghost->piece.rotation() != placement.final_rotation ||
         hard_drop_distance() != placement.drop_distance)
       throw std::invalid_argument("placement final position does not match path");
-    SpinContext context = placement.drop_distance
-                              ? SpinContext{Movement::HardDrop, std::nullopt}
-                              : _spin_context;
-    if (context != placement.spin_context)
-      throw std::invalid_argument("placement spin context does not match path");
+    if (_spin_context != placement.spin_context)
+      throw std::invalid_argument("placement pre-drop context does not match path");
   } catch (...) {
     rollback();
     throw;

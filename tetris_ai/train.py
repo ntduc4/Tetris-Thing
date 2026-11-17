@@ -6,16 +6,21 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
-    import torch
+    import marimo as mo
+    import numpy as np
+    from torch import torch, nn
     import tetris_py
 
-    return tetris_py, torch
+    return mo, nn, np, tetris_py, torch
 
 
 @app.cell
 def _(tetris_py, torch):
     from dataclasses import dataclass
 
+    BOARD_WIDTH = 10
+    BOARD_HEIGHT = 10
+    PREVIEW_COUNT = 5
     device = torch.device("cuda")  # ROCm uses PyTorch's cuda device API.
     if torch.version.hip is None or not torch.cuda.is_available():
         raise RuntimeError("ROCm GPU unavailable; run `make -C tetris_engine ai-setup`")
@@ -41,9 +46,9 @@ def _(tetris_py, torch):
             if not isinstance(piece_cap, int) or piece_cap < 1:
                 raise ValueError("piece_cap must be a positive integer")
             config = tetris_py.EngineConfig()
-            config.width = 10
-            config.height = 40
-            config.preview_count = 5
+            config.width = BOARD_WIDTH
+            config.height = BOARD_HEIGHT
+            config.preview_count = PREVIEW_COUNT
             config.gravity = 0
             config.gravity_increase = 0
             config.bag = tetris_py.BagRule.Seven
@@ -149,14 +154,275 @@ def _(tetris_py, torch):
                 "pieces_placed": self.pieces_placed,
                 "top_out": terminated,
             }
-            reward = float(lock.lines_cleared)  # Solo objective: lines per capped episode.
+            reward = lock.score_delta # Solo objective: lines per capped episode.
             return self.observe(), reward, terminated, truncated, info
 
     env = PlacementEnv()
     initial_observation = env.reset(seed=42)
     available_placements = env.legal_placements()
     (device, len(initial_observation["board"]), len(available_placements))
-    return EnvCheckpoint, PlacementEnv, available_placements, device, env, initial_observation
+    return BOARD_HEIGHT, available_placements, device, env
+
+
+@app.cell
+def _(available_placements, mo):
+    if not available_placements:
+        raise RuntimeError("No placements available for the current game state")
+
+    placement_index = mo.ui.slider(
+        start=0,
+        stop=len(available_placements) - 1,
+        step=1,
+        value=0,
+        show_value=True,
+        label=f"Placement index (0–{len(available_placements) - 1})",
+    )
+    show_hidden = mo.ui.checkbox(label="Show all rows (including hidden rows)")
+    mo.hstack([placement_index, show_hidden], justify="start")
+    return placement_index, show_hidden
+
+
+@app.cell
+def _(available_placements, env, mo, placement_index, show_hidden):
+    placement = available_placements[int(placement_index.value)]
+    before = env.observe()["board"]
+    landing = {(cell.row, cell.col) for cell in placement.cells()}
+    height, width = len(before), len(before[0])
+    if len(landing) != 4 or any(
+        not (0 <= row < height and 0 <= col < width) or before[row][col] != 0
+        for row, col in landing
+    ):
+        raise RuntimeError("Selected placement overlaps the locked board or is out of bounds")
+
+    # A clone is an engine checkpoint. Applying the placement here never
+    # modifies env or spawns an unrevealed next piece.
+    preview = env.checkpoint().engine
+    active = preview.active_piece
+    active_cells = {
+        (active.pos.row + offset.row, active.pos.col + offset.col)
+        for offset in active.piece.current_shape()
+    } if active is not None else set()
+    lock = preview.apply_placement(placement)
+    if not lock.locked:
+        raise RuntimeError("Engine did not lock the selected placement")
+    after = tuple(tuple(int(cell) for cell in row) for row in preview.board.render())
+    if env.observe()["board"] != before:
+        raise RuntimeError("Placement preview modified the live environment")
+
+    symbols = ".IOTSZJLGX"  # Empty, tetrominoes, garbage, unclearable.
+    rows = height if show_hidden.value or any(row >= 20 for row, _ in landing) else min(20, height)
+
+    def board_text(board, overlay=frozenset(), falling=frozenset()):
+        lines = [f"   +{'-' * width}+"]
+        for row in range(rows - 1, -1, -1):
+            cells = "".join(
+                "@" if (row, col) in overlay
+                else "a" if (row, col) in falling
+                else symbols[board[row][col]]
+                for col in range(width)
+            )
+            lines.append(f"{row:02d} |{cells}|")
+        lines.append(f"   +{'-' * width}+")
+        lines.append(f"    {''.join(str(col % 10) for col in range(width))}")
+        return "\n".join(lines)
+
+    move_names = ", ".join(move.name for move in placement.moves) or "(hard drop immediately)"
+    kick = placement.spin_context.kick_offset
+    kick_text = "none" if kick is None else f"({kick.row}, {kick.col})"
+    mo.vstack(
+        [
+            mo.md(
+                f"**Placement {int(placement_index.value) + 1}/{len(available_placements)}** "
+                f"— {placement.type.name}, hold: {placement.use_hold}, "
+                f"rotation: {placement.final_rotation.name}, "
+                f"root (row, col): ({placement.final_pos.row}, {placement.final_pos.col}), "
+                f"drop distance: {placement.drop_distance}.  \n"
+                f"Moves: {move_names}. Last movement: {placement.spin_context.last_movement.name}; "
+                f"kick: {kick_text}.  \n"
+                f"**Engine result:** lines {lock.lines_cleared}, score +{lock.score_delta}, "
+                f"attack {lock.attack_sent}, spin {lock.spin.name}, "
+                f"perfect clear: {lock.perfect_clear}."
+            ),
+            mo.hstack(
+                [
+                    mo.md(
+                        "**Before: active (`a`), chosen landing (`@`)**\n```text\n"
+                        + board_text(before, landing, active_cells)
+                        + "\n```"
+                    ),
+                    mo.md("**After lock/line clear**\n```text\n" + board_text(after) + "\n```"),
+                ],
+                justify="start",
+                widths="equal",
+            ),
+            mo.md(
+                "`.` empty, letters locked cells (`G` garbage), `a` active piece, "
+                "`@` chosen landing. Row 0 is at the bottom. "
+                "The post-lock board includes line clears; no next piece is spawned."
+            ),
+        ]
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## AI model section
+
+    ### Q function definition and input encoding
+    """)
+    return
+
+
+@app.cell
+def _(BOARD_HEIGHT, nn, np, tetris_py):
+    class PlacementQFunction(nn.Module):
+        def __init__(self, feature_dim):
+            super().__init__()
+            self.layers = nn.Sequential(
+                nn.Linear(feature_dim, 256),
+                nn.ReLU(),
+                nn.Linear(256, 128),
+                nn.ReLU(),
+                nn.Linear(128, 1)
+            )
+        def forward(self, x):
+            return self.layers(x).squeeze(-1)
+
+    def encode(observation, placement: tetris_py.Placement):
+        board = (np.asarray(observation["board"])!=0).astype(np.float32).ravel()
+        # print(board)
+        action = np.array([
+            placement.final_pos.row / BOARD_HEIGHT,
+            placement.final_pos.col / BOARD_HEIGHT,
+            int(placement.final_rotation) / 4,
+            float(placement.use_hold)
+        ], dtype = np.float32)
+        return np.concatenate((board, action))
+
+    gamma = 0.99
+    return PlacementQFunction, encode, gamma
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Choosing an action
+    """)
+    return
+
+
+@app.cell
+def _(PlacementQFunction, device, encode, env, np, torch):
+    # import numpy as np
+
+    observation = env.reset(seed=42)
+    actions = env.legal_placements()
+
+    feature_dim = len(encode(observation, actions[0]))
+    print(feature_dim)
+
+    q_online = PlacementQFunction(feature_dim).to(device)
+    optimizer = torch.optim.Adam(q_online.parameters(), lr=1e-4)
+
+    features = np.stack([encode(observation, a) for a in actions])
+    print(features.shape)
+    batch = torch.as_tensor(features, dtype=torch.float32, device=device)
+
+    with torch.no_grad():
+        scores = q_online(batch)
+        chosen_index = int(scores.argmax().item())
+        print(scores.shape, chosen_index)
+
+    action = actions[chosen_index]
+    return (
+        action,
+        chosen_index,
+        feature_dim,
+        observation,
+        optimizer,
+        q_online,
+        scores,
+    )
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Training step
+    """)
+    return
+
+
+@app.cell
+def _(
+    action,
+    chosen_index,
+    device,
+    encode,
+    env,
+    gamma,
+    np,
+    observation,
+    optimizer,
+    q_online,
+    scores,
+    torch,
+):
+    import torch.nn.functional as F
+
+    # Batch dimension
+    current_input = torch.as_tensor(
+        encode(observation, action), dtype=torch.float32, device=device
+    ).unsqueeze(0)
+
+    next_observation, reward, terminated, truncated, info = env.step(action)
+    prediction = q_online(current_input)[0] # [0] for turning [1] -> scalar
+                                            # Without no_grad to keep gradient
+
+    with torch.no_grad():
+        if terminated or truncated:
+            target = torch.tensor(reward, dtype=torch.float32, device=device)
+        else:
+            next_actions = env.legal_placements()
+            next_features = np.stack([encode(next_observation, a) for a in next_actions])
+            next_batch = torch.as_tensor(next_features, dtype=torch.float32, device=device)
+            target = reward + gamma * q_online(next_batch).max()
+            print(scores.shape, chosen_index)
+
+    loss = F.smooth_l1_loss(prediction, target)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
+
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Save and load model
+    """)
+    return
+
+
+@app.cell
+def _(PlacementQFunction, device, feature_dim, q_online, torch):
+    torch.save(
+        {
+            "model": q_online.state_dict(),
+            "feature_dim": feature_dim,
+            "encoding_version": 1,
+        },
+        "q.pt",
+    )
+
+    saved = torch.load("q.pt", map_location=device, weights_only=True)
+    loaded_model = PlacementQFunction(saved["feature_dim"]).to(device)
+    loaded_model.load_state_dict(saved["model"])
+    loaded_model.eval()
+    return
 
 
 if __name__ == "__main__":

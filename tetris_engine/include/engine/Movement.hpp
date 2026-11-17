@@ -29,7 +29,7 @@ struct SpinContext {
 
 /** One reachable, replayable hard-drop action. Outcome values belong to LockResult. */
 struct Placement {
-  /** Commands before the final hard drop; hold is represented separately. */
+  /** Replayable commands ending in exactly one locking HardDrop; hold is separate. */
   std::vector<Movement> moves;
   PieceType type = PieceType::T;
   /** Grounded root coordinate and rotation after the hard drop. */
@@ -37,8 +37,20 @@ struct Placement {
   Rotation final_rotation = Rotation::North;
   bool use_hold = false;
   uint16_t drop_distance = 0;
-  /** Spin metadata at lock time, after the hard drop clears it if it moved. */
+  /** Last move and kick before HardDrop; a moving drop cancels spin at lock. */
   SpinContext spin_context;
+
+  /** The four board-space cells occupied just before line clearing. */
+  std::vector<Position> cells() const {
+    Piece piece = get_from_piece_type(type);
+    piece.rotate_to(final_rotation);
+    std::vector<Position> result;
+    result.reserve(4);
+    for (Offset offset : piece.current_shape())
+      result.push_back({static_cast<int16_t>(final_pos.row + offset.row),
+                        static_cast<int16_t>(final_pos.col + offset.col)});
+    return result;
+  }
 };
 
 } // namespace tetris
