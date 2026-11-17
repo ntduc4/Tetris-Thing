@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := build
-.PHONY: help configure build test python test-python ai cli run-cli qt run-qt clean
+.PHONY: help configure build test python test-python ai-setup ai-check ai cli run-cli qt run-qt clean
 
 BUILD_DIR := build
 PYTHON ?= python3
@@ -9,7 +9,9 @@ help:
 		'make test         Build and run all available tests' \
 		'make python       Build the tetris_py module' \
 		'make test-python  Build and test the Python module' \
-		'make ai           Build tetris_py and run ../tetris_ai/main.py' \
+		'make ai-setup     Install the training environment, build tetris_py, and check ROCm' \
+		'make ai-check     Check ROCm, PyTorch, marimo, and the engine binding' \
+		'make ai           Open the training marimo notebook (after ai-setup)' \
 		'make run-cli      Build and launch the interactive CLI' \
 		'make run-qt       Build and launch the Qt app (requires Qt 6)' \
 		'make clean        Remove the build directory'
@@ -30,8 +32,16 @@ python:
 test-python: python
 	ctest --test-dir $(BUILD_DIR) -R tetris_python_tests --output-on-failure
 
-ai: python
-	PYTHONPATH="$(abspath $(BUILD_DIR))$${PYTHONPATH:+:$${PYTHONPATH}}" $(PYTHON) ../tetris_ai/main.py
+ai-setup:
+	poetry -C ../tetris_ai install --no-root
+	$(MAKE) python PYTHON="$$(poetry -C ../tetris_ai env info --executable)"
+	$(MAKE) ai-check
+
+ai-check:
+	PYTHONPATH="$(abspath $(BUILD_DIR))$${PYTHONPATH:+:$${PYTHONPATH}}" poetry -C ../tetris_ai run python ../tetris_ai/check_env.py
+
+ai: ai-check
+	PYTHONPATH="$(abspath $(BUILD_DIR))$${PYTHONPATH:+:$${PYTHONPATH}}" poetry -C ../tetris_ai run marimo edit ../tetris_ai/train.py
 
 cli: configure
 	cmake --build $(BUILD_DIR) --target tetris_cli
