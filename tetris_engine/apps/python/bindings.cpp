@@ -1,3 +1,4 @@
+#include "bot/MisaMinoBot.hpp"
 #include "core/Core.hpp"
 #include "engine/Engine.hpp"
 #include "engine/Match.hpp"
@@ -310,6 +311,19 @@ PYBIND11_MODULE(tetris_py, m) {
       .def_property_readonly("pending_garbage_packets", &Engine::pending_garbage_packets)
       .def("pending_garbage", &Engine::pending_garbage,
            "Copy of incoming packets in arrival order, including travel delays.");
+
+  py::class_<MisaMinoConfig>(m, "MisaMinoConfig",
+      "Search limits for the MisaMino-inspired placement teacher.")
+      .def(py::init<>())
+      .def_readwrite("search_depth", &MisaMinoConfig::search_depth)
+      .def_readwrite("beam_width", &MisaMinoConfig::beam_width)
+      .def_readwrite("node_budget", &MisaMinoConfig::node_budget);
+  py::class_<MisaMinoBot>(m, "MisaMinoBot",
+      "Independent MisaMino-inspired bot, not a port of the original binary.")
+      .def(py::init<MisaMinoConfig>(), py::arg("config") = MisaMinoConfig{})
+      .def("choose", &MisaMinoBot::choose, py::arg("engine"),
+           py::call_guard<py::gil_scoped_release>(),
+           "Return a replayable Placement or None without changing the engine.");
 
   py::class_<SoloSettings>(m, "SoloSettings")
       .def(py::init<>())

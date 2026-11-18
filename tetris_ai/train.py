@@ -56,6 +56,7 @@ def _(tetris_py, torch):
             config.spin = tetris_py.SpinRule.AllMiniPlus
             config.attack = tetris_py.AttackRule.Season2
             self._engine = tetris_py.Engine(config)
+            self._misamino_bot = tetris_py.MisaMinoBot()
             self.piece_cap = piece_cap
             self._seed = None
             self.pieces_placed = 0
@@ -125,6 +126,42 @@ def _(tetris_py, torch):
                 held = self._engine.generate_hold_piece_placement() if self._engine.can_hold else []
                 self._actions = tuple(active + held)
             return self._actions
+
+        def misamino_choice(self, bot=None):
+            """Return this state's cached legal Placement chosen by the C++ teacher.
+
+            An optional MisaMinoBot can set a different search budget. The bot
+            returns a separate Placement object, so match the full replayable
+            action (including spin context) before passing it to step().
+            """
+            if self._seed is None:
+                raise RuntimeError("Call reset(seed) before requesting a teacher choice")
+            if self.done:
+                raise RuntimeError("Episode ended; call reset(seed)")
+            bot = self._misamino_bot if bot is None else bot
+            if not isinstance(bot, tetris_py.MisaMinoBot):
+                raise TypeError("Expected a tetris_py.MisaMinoBot")
+            proposed = bot.choose(self._engine)
+            if proposed is None:
+                raise RuntimeError("Teacher found no legal placement")
+
+            def action_key(placement):
+                kick = placement.spin_context.kick_offset
+                return (
+                    placement.use_hold, int(placement.type),
+                    placement.final_pos.row, placement.final_pos.col,
+                    int(placement.final_rotation), placement.drop_distance,
+                    tuple(int(move) for move in placement.moves),
+                    int(placement.spin_context.last_movement),
+                    None if kick is None else (kick.row, kick.col),
+                )
+
+            key = action_key(proposed)
+            matches = [action for action in self.legal_placements()
+                       if action_key(action) == key]
+            if len(matches) != 1:
+                raise RuntimeError("Teacher choice did not match exactly one legal placement")
+            return matches[0]
 
         def step(self, action):
             if self.done:
@@ -544,7 +581,7 @@ def _(device, encode, env, np, torch):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Full episode training
+    ### Full episode training (Q-learning)
     """)
     return
 
@@ -604,6 +641,48 @@ def _(F, device, encode, gamma, nn, np, torch):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ### Full episode training (Behaviour cloning)
+    """)
+    return
+
+
+@app.cell
+def _(F, device, encode, nn, np, torch):
+    def train_an_episode_behaviour_cloning(
+        seed: int,
+        model: nn.Module,
+        optimizer: torch.optim.Adam,
+        training_env,
+    ):
+        observation = training_env.reset(seed)
+        while True:
+            # Current action
+            actions = training_env.legal_placements()
+            features = np.stack([encode(observation, a) for a in actions])
+            batch = torch.as_tensor(features, dtype=torch.float32, device=device)
+            scores = model(batch)  # Gradients must reach every action score.
+
+            # Teacher action (target)
+            teacher_action = training_env.misamino_choice()
+            teacher_index = actions.index(teacher_action)
+            loss = F.cross_entropy(
+                scores.unsqueeze(0),
+                torch.tensor([teacher_index], dtype=torch.long, device=device),
+            )
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+
+            observation, _, terminated, truncated, _ = training_env.step(teacher_action)
+            if terminated or truncated:
+                break
+
+    return (train_an_episode_behaviour_cloning,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ### Checkpoint helpers
     """)
     return
@@ -611,40 +690,61 @@ def _(mo):
 
 @app.cell
 def _(ENCODING_VERSION, PlacementQFunction, device, feature_dim, gamma, torch):
-    from pathlib import Path as _Path
+    import pathlib as _pathlib
 
-    checkpoint_dir = (
-        _Path("/home/ntd/Projects/tetris/tetris_ai")
+    checkpoint_root = (
+        _pathlib.Path("/home/ntd/Projects/tetris/tetris_ai")
         / "checkpoints" / f"encoding_v{ENCODING_VERSION}"
     )
+    checkpoint_dir = checkpoint_root / "shared"
 
-    def init_training_model():
-        """Resume model and Adam state from latest.pt, or start a new run."""
+    def init_training_model(method):
+        """Resume shared weights; import the newest legacy model on the first run."""
+        if method not in ("q_learning", "behaviour_cloning"):
+            raise ValueError(f"Unknown training method: {method}")
         model = PlacementQFunction(feature_dim).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-        latest = checkpoint_dir / "latest.pt"
+        source = checkpoint_dir / "latest.pt"
+        if not source.exists():
+            legacy = (
+                checkpoint_root / "latest.pt",
+                checkpoint_root / "behaviour_cloning" / "latest.pt",
+            )
+            source = max(
+                (path for path in legacy if path.exists()),
+                key=lambda path: path.stat().st_mtime_ns,
+                default=None,
+            )
         completed = 0
-        if latest.exists():
-            saved = torch.load(latest, map_location=device, weights_only=True)
+        if source is not None:
+            saved = torch.load(source, map_location=device, weights_only=True)
             if (saved["feature_dim"] != feature_dim or
                     saved.get("encoding_version") != ENCODING_VERSION):
                 raise ValueError("Checkpoint does not match the current feature encoder.")
+            source_method = saved.get("training_method", "q_learning")
+            if source_method not in ("q_learning", "behaviour_cloning"):
+                raise ValueError("Checkpoint has an unknown training method.")
             model.load_state_dict(saved["model"])
-            if "optimizer" in saved:
+            if source_method == method and "optimizer" in saved:
                 optimizer.load_state_dict(saved["optimizer"])
             completed = int(saved.get("episodes_trained", 0))
+            print(f"Training {method} from {source} ({source_method} weights)")
         return model, optimizer, completed
 
-    def save_training_model(model, optimizer, episodes_trained):
-        """Keep each version immutable while updating the latest alias."""
+    def save_training_model(method, model, optimizer, episodes_trained):
+        """Keep shared versions immutable while updating the latest alias."""
+        if method not in ("q_learning", "behaviour_cloning"):
+            raise ValueError(f"Unknown training method: {method}")
         checkpoint = {
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
             "feature_dim": feature_dim,
             "encoding_version": ENCODING_VERSION,
             "episodes_trained": episodes_trained,
-            "gamma": gamma,
+            "training_method": method,
         }
+        if method == "q_learning":
+            checkpoint["gamma"] = gamma
         versioned = checkpoint_dir / "models" / f"episodes_{episodes_trained:06d}.pt"
         versioned.parent.mkdir(parents=True, exist_ok=True)
         with versioned.open("xb") as file:  # Never overwrite a versioned model.
@@ -659,34 +759,90 @@ def _(ENCODING_VERSION, PlacementQFunction, device, feature_dim, gamma, torch):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ### Profiling
+    """)
+    return
+
+
+@app.cell(disabled=True)
+def _(
+    PlacementQFunction,
+    device,
+    env,
+    feature_dim,
+    torch,
+    train_an_episode_behaviour_cloning,
+):
+    import cProfile
+    import pstats
+
+    _test_env = type(env)(piece_cap=10)
+    _test_model = PlacementQFunction(feature_dim).to(device)
+    _test_optimizer = torch.optim.Adam(_test_model.parameters(), lr=1e-4)
+
+    _profiler = cProfile.Profile()
+    torch.cuda.synchronize()
+    _profiler.enable()
+    train_an_episode_behaviour_cloning(
+        seed=42,
+        model=_test_model,
+        optimizer=_test_optimizer,
+        training_env=_test_env,
+    )
+    torch.cuda.synchronize()
+    _profiler.disable()
+
+    pstats.Stats(_profiler).sort_stats("cumtime").print_stats(20)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ### Training loop
 
-    Each click resumes from `latest.pt`, trains N_EPISODES more episodes, and saves a new version.
+    Both buttons resume the same `shared/latest.pt`; the button chooses the
+    training method. On the first run, the newest existing Q or BC checkpoint
+    supplies the weights. Switching methods starts a fresh optimizer. Every
+    click saves a version in `shared/models/`; original checkpoints are kept.
     """)
     return
 
 
 @app.cell
 def _(mo):
-    N_EPISODES = 2000
-    train_button = mo.ui.run_button(label=f"Train next {N_EPISODES} episodes")
-    train_button
-    return N_EPISODES, train_button
+    N_EPISODES = 10
+    q_train_button = mo.ui.run_button(label=f"Train Q-learning ({N_EPISODES} episodes)")
+    bc_train_button = mo.ui.run_button(
+        label=f"Train behavioural cloning ({N_EPISODES} episodes)"
+    )
+    mo.hstack([q_train_button, bc_train_button], justify="start")
+    return N_EPISODES, bc_train_button, q_train_button
 
 
 @app.cell
 def _(
     N_EPISODES,
+    bc_train_button,
     checkpoint_dir,
     env,
     init_training_model,
     mo,
+    q_train_button,
+    train_an_episode_behaviour_cloning,
     train_an_episode_q_learning,
-    train_button,
 ):
-    mo.stop(not train_button.value, mo.md("Click the button above to train."))
+    mo.stop(
+        not (q_train_button.value or bc_train_button.value),
+        mo.md("Click a training button above."),
+    )
+    if q_train_button.value and bc_train_button.value:
+        raise RuntimeError("Run one training method at a time.")
+    training_method = "q_learning" if q_train_button.value else "behaviour_cloning"
 
-    trained_model, trained_optimizer, completed_episodes = init_training_model()
+    trained_model, trained_optimizer, completed_episodes = init_training_model(
+        training_method
+    )
     episodes_trained = completed_episodes + N_EPISODES
     _versioned = checkpoint_dir / "models" / f"episodes_{episodes_trained:06d}.pt"
     if _versioned.exists():
@@ -695,16 +851,33 @@ def _(
     _train_env = type(env)(piece_cap=env.piece_cap)  # Leave the demo board alone.
     trained_model.train()
     for _episode in range(completed_episodes, episodes_trained):
-        train_an_episode_q_learning(
-            seed=10_000 + _episode,
-            q_online=trained_model,
-            optimizer=trained_optimizer,
-            training_env=_train_env,
-            epsilon=0.1,
-        )
-        if (_episode - completed_episodes + 1) % 20 == 0:
-            print(f"Trained {_episode - completed_episodes + 1}/{N_EPISODES} episodes")
-    return episodes_trained, trained_model, trained_optimizer
+        if training_method == "q_learning":
+            train_an_episode_q_learning(
+                seed=10_000 + _episode,
+                q_online=trained_model,
+                optimizer=trained_optimizer,
+                training_env=_train_env,
+                epsilon=0.1,
+            )
+        else:
+            train_an_episode_behaviour_cloning(
+                seed=10_000 + _episode,
+                model=trained_model,
+                optimizer=trained_optimizer,
+                training_env=_train_env,
+            )
+        if bc_train_button.value or ((_episode - completed_episodes + 1) % 20 == 0):
+            print(
+                f"{training_method}: trained "
+                f"{_episode - completed_episodes + 1}/{N_EPISODES} episodes"
+            )
+    return (
+        checkpoint_dir,
+        episodes_trained,
+        trained_model,
+        trained_optimizer,
+        training_method,
+    )
 
 
 @app.cell(hide_code=True)
@@ -724,20 +897,22 @@ def _(
     save_training_model,
     trained_model,
     trained_optimizer,
+    training_method,
 ):
     from json import dumps as _dumps
 
     _latest, _versioned = save_training_model(
-        trained_model, trained_optimizer, episodes_trained
+        training_method, trained_model, trained_optimizer, episodes_trained
     )
     replay_data = evaluate_episode(trained_model)
     replay_data["episodes_trained"] = episodes_trained
+    replay_data["training_method"] = training_method
     replay_path = checkpoint_dir / "replays" / "eval.json"
     replay_path.parent.mkdir(parents=True, exist_ok=True)
     replay_path.write_text(_dumps(replay_data))
     _relative_dir = checkpoint_dir.relative_to(checkpoint_dir.parent.parent)
     mo.md(
-        f"Trained through **{episodes_trained} episodes**. Saved "
+        f"{training_method}: trained through **{episodes_trained} total episodes**. Saved "
         f"`{_relative_dir / _latest.name}`, "
         f"`{_relative_dir / 'models' / _versioned.name}`, and a greedy evaluation replay "
         f"with **{len(replay_data['frames'])} placements**."

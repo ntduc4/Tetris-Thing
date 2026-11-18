@@ -24,7 +24,98 @@ def paint_single_well(game):
     assert game.set_edit_mode(False)
 
 
+def placement_key(placement):
+    kick = placement.spin_context.kick_offset
+    return (
+        placement.use_hold, int(placement.type),
+        placement.final_pos.row, placement.final_pos.col,
+        int(placement.final_rotation), placement.drop_distance,
+        tuple(int(move) for move in placement.moves),
+        int(placement.spin_context.last_movement),
+        None if kick is None else (kick.row, kick.col),
+    )
+
+
 class BindingsTests(unittest.TestCase):
+    def test_misamino_bot_returns_replayable_legal_placements(self):
+        cfg = t.EngineConfig()
+        cfg.height = 10
+        cfg.gravity = 0
+        cfg.gravity_increase = 0
+        game = t.Engine(cfg)
+        limits = t.MisaMinoConfig()
+        limits.search_depth = 2
+        limits.beam_width = 4
+        limits.node_budget = 1000
+        bot = t.MisaMinoBot(limits)
+        self.assertIsNone(bot.choose(game))
+        game.reset(17)
+        self.assertTrue(game.spawn_next_piece())
+
+        for _ in range(4):
+            before = (game.board.render(), game.preview_queue(),
+                      game.active_piece.pos.row, game.hold_piece, game.score)
+            choice = bot.choose(game)
+            self.assertIsInstance(choice, t.Placement)
+            legal = (game.generate_active_piece_placement() +
+                     game.generate_hold_piece_placement())
+            self.assertEqual(sum(placement_key(a) == placement_key(choice)
+                                 for a in legal), 1)
+            self.assertEqual((game.board.render(), game.preview_queue(),
+                              game.active_piece.pos.row, game.hold_piece,
+                              game.score), before)
+            self.assertTrue(game.apply_placement(choice).locked)
+            if game.game_over or not game.spawn_next_piece():
+                break
+
+        limits.search_depth = 0
+        with self.assertRaises(ValueError):
+            t.MisaMinoBot(limits)
+
+    def test_misamino_spin_path_matches_python_placement(self):
+        cfg = t.EngineConfig()
+        cfg.height = 24
+        cfg.gravity = 0
+        cfg.attack = t.AttackRule.Off
+        cfg.spin = t.SpinRule.TOnly
+        game = t.Engine(cfg)
+        for seed in range(100):
+            game.reset(seed)
+            if game.preview_queue()[0] == t.PieceType.T:
+                break
+        else:
+            self.fail("could not find a T-piece seed")
+        self.assertTrue(game.spawn_next_piece())
+        self.assertTrue(game.set_edit_mode(True))
+        for col in range(10):
+            if col != 8:
+                self.assertTrue(game.paint_cell(0, col, t.Cell.Garbage))
+        self.assertTrue(game.paint_cell(2, 7, t.Cell.Garbage))
+        self.assertTrue(game.paint_cell(3, 0, t.Cell.Garbage))
+        self.assertTrue(game.set_edit_mode(False))
+
+        limits = t.MisaMinoConfig()
+        limits.search_depth = 1
+        bot = t.MisaMinoBot(limits)
+        choice = bot.choose(game)
+        legal = game.generate_active_piece_placement()
+        self.assertEqual(sum(placement_key(p) == placement_key(choice)
+                             for p in legal), 1)
+        matching_pose = [p for p in legal if
+                         (p.final_pos.row, p.final_pos.col,
+                          p.final_rotation) ==
+                         (-1, 7, t.Rotation.East)]
+        self.assertEqual(len(matching_pose), 2)
+        outcomes = []
+        for p in matching_pose:
+            clone = game.clone()
+            outcomes.append(clone.apply_placement(p).spin)
+        self.assertIn(t.SpinType.None_, outcomes)
+        self.assertIn(t.SpinType.Mini, outcomes)
+        result = game.apply_placement(choice)
+        self.assertNotEqual(result.spin, t.SpinType.None_)
+        self.assertEqual(result.lines_cleared, 1)
+
     def test_engine_observation_actions_and_explicit_spawn(self):
         cfg = t.EngineConfig()
         cfg.gravity = 0
