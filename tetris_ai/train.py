@@ -427,52 +427,247 @@ def _(PlacementQFunction, device, feature_dim, q_online, torch):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Eval episode
+    ### Greedy evaluation helper
     """)
     return
 
 
+@app.cell
+def _(device, encode, env, np, torch):
+    def evaluate_episode(model, seed=987654321):
+        """Record a greedy game without modifying the training environment."""
+        eval_env = type(env)(piece_cap=env.piece_cap)  # Independent of training.
+        observation = eval_env.reset(seed)
+        frames = []
+        was_training = model.training
+        model.eval()
+        try:
+            with torch.no_grad():
+                while True:
+                    actions = eval_env.legal_placements()
+                    features = np.stack([encode(observation, a) for a in actions])
+                    batch = torch.as_tensor(features, dtype=torch.float32, device=device)
+                    action = actions[int(model(batch).argmax().item())]
+
+                    next_observation, reward, terminated, truncated, info = eval_env.step(action)
+                    frames.append({
+                        "before": observation["board"],
+                        "landing": [[cell.row, cell.col] for cell in action.cells()],
+                        "after": next_observation["board"],
+                        "reward": reward,
+                        "score": next_observation["score"],
+                        "lines": info["lines_cleared"],
+                        "moves": [move.name for move in action.moves],
+                        "piece": action.type.name,
+                        "use_hold": action.use_hold,
+                        "rotation": action.final_rotation.name,
+                    })
+                    observation = next_observation
+                    if terminated or truncated:
+                        break
+        finally:
+            model.train(was_training)
+        return {"seed": seed, "frames": frames}
+
+    return (evaluate_episode,)
+
+
 @app.cell(hide_code=True)
-def _(device, encode, env, np, q_online, torch):
-    import json
-    from pathlib import Path
+def _(mo):
+    mo.md(r"""
+    ### Full episode training
+    """)
+    return
 
-    _eval_env = type(env)(piece_cap=env.piece_cap)  # Don't disturb the training env.
-    _seed = 987654321
-    _observation = _eval_env.reset(_seed)
-    _frames = []
 
-    q_online.eval()
-    with torch.no_grad():
+@app.cell
+def _(F, device, encode, gamma, nn, np, torch):
+    import random
+
+    rng = random.Random(6789)
+
+    def train_an_episode_q_learning(
+        seed: int,
+        q_online: nn.Module,
+        optimizer: torch.optim.Adam,
+        training_env,
+        epsilon: float = 0.05,
+    ):
+        observation = training_env.reset(seed)
         while True:
-            _actions = _eval_env.legal_placements()
-            _features = np.stack([encode(_observation, a) for a in _actions])
-            _batch = torch.as_tensor(_features, dtype=torch.float32, device=device)
-            _action = _actions[int(q_online(_batch).argmax().item())]
+            # Current action
+            actions = training_env.legal_placements()
+            features = np.stack([encode(observation, a) for a in actions])
+            batch = torch.as_tensor(features, dtype=torch.float32, device=device)
+            with torch.no_grad():
+                scores = q_online(batch)
+            chosen_index = rng.randrange(len(actions)) if rng.random() < epsilon else int(scores.argmax().item())
+            action = actions[chosen_index]
+            current_input = torch.as_tensor(
+                encode(observation, action), dtype=torch.float32, device=device
+            ).unsqueeze(0)
 
-            _next_observation, _reward, _terminated, _truncated, _info = _eval_env.step(_action)
-            _frames.append({
-                "before": _observation["board"],
-                "landing": [[cell.row, cell.col] for cell in _action.cells()],
-                "after": _next_observation["board"],
-                "reward": _reward,
-                "score": _next_observation["score"],
-                "lines": _info["lines_cleared"],
-                "moves": [move.name for move in _action.moves],
-                "piece": _action.type.name,
-                "use_hold": _action.use_hold,
-                "rotation": _action.final_rotation.name,
-            })
-            _observation = _next_observation
-            if _terminated or _truncated:
+            # Applying action
+            next_observation, reward, terminated, truncated, info = training_env.step(action)
+            prediction = q_online(current_input)[0]
+            observation = next_observation
+
+            # Q learning target update
+            with torch.no_grad():
+                if terminated or truncated:
+                    target = torch.tensor(reward, dtype=torch.float32, device=device)
+                else:
+                    next_actions = training_env.legal_placements()
+                    next_features = np.stack([encode(next_observation, a) for a in next_actions])
+                    next_batch = torch.as_tensor(next_features, dtype=torch.float32, device=device)
+                    target = reward + gamma * q_online(next_batch).max()
+            loss = F.smooth_l1_loss(prediction, target)
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+
+            if terminated or truncated:
                 break
 
-    q_online.train()  # Return to training mode.
+    return (train_an_episode_q_learning,)
 
-    replay_path = Path("/home/ntd/Projects/tetris/tetris_ai/replays/eval.json")
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Checkpoint helpers
+    """)
+    return
+
+
+@app.cell
+def _(PlacementQFunction, device, feature_dim, gamma, torch):
+    from pathlib import Path as _Path
+
+    checkpoint_dir = _Path("/home/ntd/Projects/tetris/tetris_ai")
+
+    def init_training_model():
+        """Resume model and Adam state from latest.pt, or start a new run."""
+        model = PlacementQFunction(feature_dim).to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+        latest = checkpoint_dir / "latest.pt"
+        completed = 0
+        if latest.exists():
+            saved = torch.load(latest, map_location=device, weights_only=True)
+            if saved["feature_dim"] != feature_dim or saved.get("encoding_version") != 1:
+                raise ValueError("Checkpoint does not match the current feature encoder.")
+            model.load_state_dict(saved["model"])
+            if "optimizer" in saved:
+                optimizer.load_state_dict(saved["optimizer"])
+            completed = int(saved.get("episodes_trained", 0))
+        return model, optimizer, completed
+
+    def save_training_model(model, optimizer, episodes_trained):
+        """Keep each version immutable while updating the latest alias."""
+        checkpoint = {
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "feature_dim": feature_dim,
+            "encoding_version": 1,
+            "episodes_trained": episodes_trained,
+            "gamma": gamma,
+        }
+        versioned = checkpoint_dir / "models" / f"episodes_{episodes_trained:06d}.pt"
+        versioned.parent.mkdir(parents=True, exist_ok=True)
+        with versioned.open("xb") as file:  # Never overwrite a versioned model.
+            torch.save(checkpoint, file)
+        latest = checkpoint_dir / "latest.pt"
+        torch.save(checkpoint, latest)  # Update the alias; old versions remain.
+        return latest, versioned
+
+    return checkpoint_dir, init_training_model, save_training_model
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Training loop
+
+    Each click resumes from `latest.pt`, trains N_EPISODES more episodes, and saves a new version.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    N_EPISODES = 1000
+    train_button = mo.ui.run_button(label=f"Train next {N_EPISODES} episodes")
+    train_button
+    return N_EPISODES, train_button
+
+
+@app.cell
+def _(
+    N_EPISODES,
+    checkpoint_dir,
+    env,
+    init_training_model,
+    mo,
+    train_an_episode_q_learning,
+    train_button,
+):
+    mo.stop(not train_button.value, mo.md("Click the button above to train."))
+
+    trained_model, trained_optimizer, completed_episodes = init_training_model()
+    episodes_trained = completed_episodes + N_EPISODES
+    _versioned = checkpoint_dir / "models" / f"episodes_{episodes_trained:06d}.pt"
+    if _versioned.exists():
+        raise FileExistsError(f"Refusing to overwrite {_versioned}")
+
+    _train_env = type(env)(piece_cap=env.piece_cap)  # Leave the demo board alone.
+    trained_model.train()
+    for _episode in range(completed_episodes, episodes_trained):
+        train_an_episode_q_learning(
+            seed=10_000 + _episode,
+            q_online=trained_model,
+            optimizer=trained_optimizer,
+            training_env=_train_env,
+            epsilon=0.02,
+        )
+        if (_episode - completed_episodes + 1) % 20 == 0:
+            print(f"Trained {_episode - completed_episodes + 1}/{N_EPISODES} episodes")
+    return episodes_trained, trained_model, trained_optimizer
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Save model and evaluation replay
+    """)
+    return
+
+
+@app.cell
+def _(
+    checkpoint_dir,
+    episodes_trained,
+    evaluate_episode,
+    mo,
+    save_training_model,
+    trained_model,
+    trained_optimizer,
+):
+    from json import dumps as _dumps
+
+    _latest, _versioned = save_training_model(
+        trained_model, trained_optimizer, episodes_trained
+    )
+    replay_data = evaluate_episode(trained_model)
+    replay_data["episodes_trained"] = episodes_trained
+    replay_path = checkpoint_dir / "replays" / "eval.json"
     replay_path.parent.mkdir(parents=True, exist_ok=True)
-    replay_path.write_text(json.dumps({"seed": _seed, "frames": _frames}))
-    return (replay_path,)
+    replay_path.write_text(_dumps(replay_data))
+    mo.md(
+        f"Trained through **{episodes_trained} episodes**. Saved `{_latest.name}`, "
+        f"`models/{_versioned.name}`, and a greedy evaluation replay "
+        f"with **{len(replay_data['frames'])} placements**."
+    )
+    return (replay_data,)
 
 
 @app.cell(hide_code=True)
@@ -480,16 +675,13 @@ def _(mo):
     mo.md(r"""
     ### Episode replay
 
-    Scrub through the saved evaluation game, one placement at a time.
+    Scrub through the just-saved evaluation game, one placement at a time.
     """)
     return
 
 
 @app.cell
-def _(mo, replay_path):
-    from json import loads as _loads
-
-    replay_data = _loads(replay_path.read_text())
+def _(mo, replay_data):
     _frames = replay_data["frames"]
     replay_slider = mo.ui.slider(
         start=0,
@@ -500,7 +692,7 @@ def _(mo, replay_path):
         show_value=True,
         label="Placement index",
     )
-    return replay_data, replay_slider
+    return (replay_slider,)
 
 
 @app.cell
@@ -560,68 +752,6 @@ def _(mo, replay_data, replay_slider):
     else:
         _replay_view = mo.md("No placements to display.")
     _replay_view
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ### Full episode training
-    """)
-    return
-
-
-@app.cell
-def _(F, device, encode, env, gamma, nn, np, torch):
-    import random
-
-    rng = random.Random(6789)
-
-    def train_an_episode_q_learning(seed: int, q_online: nn.Module, optimizer: torch.optim.Adam, epsilon: float = 0.05):
-        observation = env.reset(seed)
-        while True:
-            # Current action
-            actions = env.legal_placements()
-            features = np.stack([encode(observation, a) for a in actions])
-            batch = torch.as_tensor(features, dtype=torch.float32, device=device)
-            with torch.no_grad():
-                scores = q_online(batch)
-            chosen_index = rng.randrange(len(actions)) if rng.random() < epsilon else int(scores.argmax().item())
-            action = actions[chosen_index]
-            current_input = torch.as_tensor(
-                encode(observation, action), dtype=torch.float32, device=device
-            ).unsqueeze(0)
-
-            # Applying action
-            next_observation, reward, terminated, truncated, info = env.step(action)
-            prediction = q_online(current_input)[0]
-            observation = next_observation
-
-            # Q learning target update
-            with torch.no_grad():
-                if terminated or truncated:
-                    target = torch.tensor(reward, dtype=torch.float32, device=device)
-                else:
-                    next_actions = env.legal_placements()
-                    next_features = np.stack([encode(next_observation, a) for a in next_actions])
-                    next_batch = torch.as_tensor(next_features, dtype=torch.float32, device=device)
-                    target = reward + gamma * q_online(next_batch).max()
-            loss = F.smooth_l1_loss(prediction, target)
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            optimizer.step()
-        
-            if terminated or truncated:
-                break
-
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ### Training loop
-    """)
     return
 
 
