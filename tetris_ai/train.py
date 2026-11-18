@@ -54,7 +54,7 @@ def _(tetris_py, torch):
             config.bag = tetris_py.BagRule.Seven
             config.rotation = tetris_py.RotationRule.SRSPlus
             config.spin = tetris_py.SpinRule.AllMiniPlus
-            config.attack = tetris_py.AttackRule.Off
+            config.attack = tetris_py.AttackRule.Season2
             self._engine = tetris_py.Engine(config)
             self.piece_cap = piece_cap
             self._seed = None
@@ -395,8 +395,7 @@ def _(
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
-
-    return
+    return (F,)
 
 
 @app.cell(hide_code=True)
@@ -422,6 +421,207 @@ def _(PlacementQFunction, device, feature_dim, q_online, torch):
     loaded_model = PlacementQFunction(saved["feature_dim"]).to(device)
     loaded_model.load_state_dict(saved["model"])
     loaded_model.eval()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Eval episode
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(device, encode, env, np, q_online, torch):
+    import json
+    from pathlib import Path
+
+    _eval_env = type(env)(piece_cap=env.piece_cap)  # Don't disturb the training env.
+    _seed = 987654321
+    _observation = _eval_env.reset(_seed)
+    _frames = []
+
+    q_online.eval()
+    with torch.no_grad():
+        while True:
+            _actions = _eval_env.legal_placements()
+            _features = np.stack([encode(_observation, a) for a in _actions])
+            _batch = torch.as_tensor(_features, dtype=torch.float32, device=device)
+            _action = _actions[int(q_online(_batch).argmax().item())]
+
+            _next_observation, _reward, _terminated, _truncated, _info = _eval_env.step(_action)
+            _frames.append({
+                "before": _observation["board"],
+                "landing": [[cell.row, cell.col] for cell in _action.cells()],
+                "after": _next_observation["board"],
+                "reward": _reward,
+                "score": _next_observation["score"],
+                "lines": _info["lines_cleared"],
+                "moves": [move.name for move in _action.moves],
+                "piece": _action.type.name,
+                "use_hold": _action.use_hold,
+                "rotation": _action.final_rotation.name,
+            })
+            _observation = _next_observation
+            if _terminated or _truncated:
+                break
+
+    q_online.train()  # Return to training mode.
+
+    replay_path = Path("/home/ntd/Projects/tetris/tetris_ai/replays/eval.json")
+    replay_path.parent.mkdir(parents=True, exist_ok=True)
+    replay_path.write_text(json.dumps({"seed": _seed, "frames": _frames}))
+    return (replay_path,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Episode replay
+
+    Scrub through the saved evaluation game, one placement at a time.
+    """)
+    return
+
+
+@app.cell
+def _(mo, replay_path):
+    from json import loads as _loads
+
+    replay_data = _loads(replay_path.read_text())
+    _frames = replay_data["frames"]
+    replay_slider = mo.ui.slider(
+        start=0,
+        stop=max(1, len(_frames) - 1),
+        step=1,
+        value=0,
+        disabled=len(_frames) < 2,
+        show_value=True,
+        label="Placement index",
+    )
+    return replay_data, replay_slider
+
+
+@app.cell
+def _(mo, replay_data, replay_slider):
+    _frames = replay_data["frames"]
+    if _frames:
+        _index = int(replay_slider.value)
+        _frame = _frames[_index]
+        _landing = {tuple(cell) for cell in _frame["landing"]}
+        _symbols = ".IOTSZJLGX"
+
+        def _replay_board_text(board, overlay=frozenset()):
+            _height, _width = len(board), len(board[0])
+            _lines = [f"   +{'-' * _width}+"]
+            for _row in range(_height - 1, -1, -1):
+                _cells = "".join(
+                    "@" if (_row, _col) in overlay else _symbols[board[_row][_col]]
+                    for _col in range(_width)
+                )
+                _lines.append(f"{_row:02d} |{_cells}|")
+            _lines.append(f"   +{'-' * _width}+")
+            _lines.append(f"    {''.join(str(col % 10) for col in range(_width))}")
+            return "\n".join(_lines)
+
+        _moves = ", ".join(_frame["moves"]) or "(hard drop immediately)"
+        _replay_view = mo.vstack(
+            [
+                mo.md(
+                    f"**Seed {replay_data['seed']} — placement {_index + 1}/{len(_frames)}**  \n"
+                    f"Piece: {_frame.get('piece', 'unknown')}, "
+                    f"hold: {_frame.get('use_hold', 'unknown')}, "
+                    f"rotation: {_frame.get('rotation', 'unknown')}.  \n"
+                    f"Moves: {_moves}. Reward: {_frame['reward']}; "
+                    f"lines: {_frame['lines']}; score: {_frame['score']}."
+                ),
+                replay_slider,
+                mo.hstack(
+                    [
+                        mo.md(
+                            "**Before: chosen landing (`@`)**\n```text\n"
+                            + _replay_board_text(_frame["before"], _landing)
+                            + "\n```"
+                        ),
+                        mo.md(
+                            "**After placement**\n```text\n"
+                            + _replay_board_text(_frame["after"])
+                            + "\n```"
+                        ),
+                    ],
+                    justify="start",
+                    widths="equal",
+                ),
+                mo.md("Row 0 is at the bottom; the board after placement includes line clears."),
+            ],
+            gap=0.25,
+        )
+    else:
+        _replay_view = mo.md("No placements to display.")
+    _replay_view
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Full episode training
+    """)
+    return
+
+
+@app.cell
+def _(F, device, encode, env, gamma, nn, np, torch):
+    import random
+
+    rng = random.Random(6789)
+
+    def train_an_episode_q_learning(seed: int, q_online: nn.Module, optimizer: torch.optim.Adam, epsilon: float = 0.05):
+        observation = env.reset(seed)
+        while True:
+            # Current action
+            actions = env.legal_placements()
+            features = np.stack([encode(observation, a) for a in actions])
+            batch = torch.as_tensor(features, dtype=torch.float32, device=device)
+            with torch.no_grad():
+                scores = q_online(batch)
+            chosen_index = rng.randrange(len(actions)) if rng.random() < epsilon else int(scores.argmax().item())
+            action = actions[chosen_index]
+            current_input = torch.as_tensor(
+                encode(observation, action), dtype=torch.float32, device=device
+            ).unsqueeze(0)
+
+            # Applying action
+            next_observation, reward, terminated, truncated, info = env.step(action)
+            prediction = q_online(current_input)[0]
+            observation = next_observation
+
+            # Q learning target update
+            with torch.no_grad():
+                if terminated or truncated:
+                    target = torch.tensor(reward, dtype=torch.float32, device=device)
+                else:
+                    next_actions = env.legal_placements()
+                    next_features = np.stack([encode(next_observation, a) for a in next_actions])
+                    next_batch = torch.as_tensor(next_features, dtype=torch.float32, device=device)
+                    target = reward + gamma * q_online(next_batch).max()
+            loss = F.smooth_l1_loss(prediction, target)
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+        
+            if terminated or truncated:
+                break
+
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Training loop
+    """)
     return
 
 
