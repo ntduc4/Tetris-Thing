@@ -19,6 +19,12 @@ target_include_directories(tetris_engine
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+# Bot code is separate from the game runtime. Link this target only for
+# consumers that need an engine-aware search teacher.
+add_library(tetris_bot src/bot/MisaMinoBot.cpp)
+target_compile_features(tetris_bot PUBLIC cxx_std_20)
+target_link_libraries(tetris_bot PUBLIC tetris_engine)
+
 add_executable(tetris_cli
     apps/cli.cpp
 )
@@ -151,6 +157,11 @@ add_executable(tetris_engine_placement_search_tests tests/engine/placement_searc
 target_link_libraries(tetris_engine_placement_search_tests PRIVATE tetris_engine)
 target_include_directories(tetris_engine_placement_search_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_test(NAME tetris_engine_placement_search_tests COMMAND tetris_engine_placement_search_tests)
+
+add_executable(tetris_bot_tests tests/bot/misamino_bot_tests.cpp)
+target_link_libraries(tetris_bot_tests PRIVATE tetris_bot)
+target_include_directories(tetris_bot_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+add_test(NAME tetris_bot_tests COMMAND tetris_bot_tests)
 
 if(TARGET tetris_qt_widgets)
     find_package(Qt6 QUIET COMPONENTS Test)
