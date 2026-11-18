@@ -105,6 +105,8 @@ def _(tetris_py, torch):
                 "can_hold": self._engine.can_hold if active is not None else False,
                 "preview": tuple(int(piece) for piece in self._engine.preview_queue())
                 if active is not None else (),
+                # Pending total is observable; packet holes/RNG are not model inputs.
+                "pending_garbage_lines": self._engine.pending_garbage_lines,
                 "combo": self._engine.combo,
                 "back_to_back": self._engine.back_to_back,
                 "back_to_back_count": self._engine.back_to_back_count,
@@ -132,6 +134,7 @@ def _(tetris_py, torch):
             actions = self.legal_placements()
             if not any(action is candidate for candidate in actions):
                 raise ValueError("Select a placement from this state's legal_placements()")
+            height_before = self._engine.board.max_height()
             lock = self._engine.apply_placement(action)
             if not lock.locked:
                 raise RuntimeError("Engine did not lock the selected placement")
@@ -154,14 +157,18 @@ def _(tetris_py, torch):
                 "pieces_placed": self.pieces_placed,
                 "top_out": terminated,
             }
-            reward = lock.score_delta # Solo objective: lines per capped episode.
+            height_after = self._engine.board.max_height()
+            reward = 5.0 * lock.lines_cleared
+            reward -= 0.1 * (height_after - height_before)
+            if terminated:          # Top-out, not the 500-piece time limit
+                reward -= 50.0
             return self.observe(), reward, terminated, truncated, info
 
     env = PlacementEnv()
     initial_observation = env.reset(seed=42)
     available_placements = env.legal_placements()
     (device, len(initial_observation["board"]), len(available_placements))
-    return BOARD_HEIGHT, available_placements, device, env
+    return PREVIEW_COUNT, available_placements, device, env
 
 
 @app.cell
@@ -276,14 +283,16 @@ def _(mo):
 
 
 @app.cell
-def _(BOARD_HEIGHT, nn, np, tetris_py):
+def _(PREVIEW_COUNT, nn, np, tetris_py):
     class PlacementQFunction(nn.Module):
         def __init__(self, feature_dim):
             super().__init__()
             self.layers = nn.Sequential(
-                nn.Linear(feature_dim, 256),
+                nn.Linear(feature_dim, 1024),
                 nn.ReLU(),
-                nn.Linear(256, 128),
+                nn.Linear(1024, 512),
+                nn.ReLU(),
+                nn.Linear(512, 128),
                 nn.ReLU(),
                 nn.Linear(128, 1)
             )
@@ -291,18 +300,64 @@ def _(BOARD_HEIGHT, nn, np, tetris_py):
             return self.layers(x).squeeze(-1)
 
     def encode(observation, placement: tetris_py.Placement):
-        board = (np.asarray(observation["board"])!=0).astype(np.float32).ravel()
-        # print(board)
+        # Keep this feature order paired with ENCODING_VERSION in checkpoints.
+        board = np.asarray(observation["board"])
+        height, width = board.shape
+
+        # The board is public; distinguish placed garbage from ordinary cells.
+        occupied = (board != int(tetris_py.Cell.Empty)).astype(np.float32).ravel()
+        garbage = (board == int(tetris_py.Cell.Garbage)).astype(np.float32).ravel()
+        landing = np.zeros((height, width), dtype=np.float32)
+        for cell in placement.cells():
+            landing[cell.row, cell.col] = 1.0
+
+        def piece_one_hot(piece):
+            # Seven piece types, plus an eighth slot for an empty hold/active piece.
+            values = np.zeros(8, dtype=np.float32)
+            values[7 if piece is None else int(piece)] = 1.0
+            return values
+
+        active_rotation = np.zeros(4, dtype=np.float32)
+        if observation["rotation"] is not None:
+            active_rotation[observation["rotation"]] = 1.0
+        active_position = observation["position"]
+        active = np.array([
+            active_position[0] / height if active_position is not None else 0.0,
+            active_position[1] / width if active_position is not None else 0.0,
+            float(observation["can_hold"]),
+        ], dtype=np.float32)
+
+        # Pad the fixed number of visible preview slots after a terminal state.
+        preview = observation["preview"]
+        if len(preview) > PREVIEW_COUNT:
+            raise ValueError("More preview pieces than the configured input size")
+        previews = [
+            piece_one_hot(preview[i] if i < len(preview) else None)
+            for i in range(PREVIEW_COUNT)
+        ]
+
+        candidate_piece = np.zeros(7, dtype=np.float32)
+        candidate_piece[int(placement.type)] = 1.0
+        candidate_rotation = np.zeros(4, dtype=np.float32)
+        candidate_rotation[int(placement.final_rotation)] = 1.0
         action = np.array([
-            placement.final_pos.row / BOARD_HEIGHT,
-            placement.final_pos.col / BOARD_HEIGHT,
-            int(placement.final_rotation) / 4,
-            float(placement.use_hold)
-        ], dtype = np.float32)
-        return np.concatenate((board, action))
+            placement.final_pos.row / height,
+            placement.final_pos.col / width,
+            float(placement.use_hold),
+            placement.drop_distance / height,
+        ], dtype=np.float32)
+
+        return np.concatenate((
+            occupied, garbage, landing.ravel(),
+            piece_one_hot(observation["active_piece"]), active_rotation, active,
+            piece_one_hot(observation["hold_piece"]), *previews,
+            candidate_piece, candidate_rotation, action,
+            np.array([observation["pending_garbage_lines"] / height], dtype=np.float32),
+        ))
 
     gamma = 0.99
-    return PlacementQFunction, encode, gamma
+    ENCODING_VERSION = 3
+    return ENCODING_VERSION, PlacementQFunction, encode, gamma
 
 
 @app.cell(hide_code=True)
@@ -407,17 +462,31 @@ def _(mo):
 
 
 @app.cell
-def _(PlacementQFunction, device, feature_dim, q_online, torch):
+def _(
+    ENCODING_VERSION,
+    PlacementQFunction,
+    device,
+    feature_dim,
+    q_online,
+    torch,
+):
+    from pathlib import Path as _Path
+
+    _demo_path = (
+        _Path("/home/ntd/Projects/tetris/tetris_ai")
+        / "checkpoints" / f"encoding_v{ENCODING_VERSION}" / "q_demo.pt"
+    )
+    _demo_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
             "model": q_online.state_dict(),
             "feature_dim": feature_dim,
-            "encoding_version": 1,
+            "encoding_version": ENCODING_VERSION,
         },
-        "q.pt",
+        _demo_path,
     )
 
-    saved = torch.load("q.pt", map_location=device, weights_only=True)
+    saved = torch.load(_demo_path, map_location=device, weights_only=True)
     loaded_model = PlacementQFunction(saved["feature_dim"]).to(device)
     loaded_model.load_state_dict(saved["model"])
     loaded_model.eval()
@@ -541,10 +610,13 @@ def _(mo):
 
 
 @app.cell
-def _(PlacementQFunction, device, feature_dim, gamma, torch):
+def _(ENCODING_VERSION, PlacementQFunction, device, feature_dim, gamma, torch):
     from pathlib import Path as _Path
 
-    checkpoint_dir = _Path("/home/ntd/Projects/tetris/tetris_ai")
+    checkpoint_dir = (
+        _Path("/home/ntd/Projects/tetris/tetris_ai")
+        / "checkpoints" / f"encoding_v{ENCODING_VERSION}"
+    )
 
     def init_training_model():
         """Resume model and Adam state from latest.pt, or start a new run."""
@@ -554,7 +626,8 @@ def _(PlacementQFunction, device, feature_dim, gamma, torch):
         completed = 0
         if latest.exists():
             saved = torch.load(latest, map_location=device, weights_only=True)
-            if saved["feature_dim"] != feature_dim or saved.get("encoding_version") != 1:
+            if (saved["feature_dim"] != feature_dim or
+                    saved.get("encoding_version") != ENCODING_VERSION):
                 raise ValueError("Checkpoint does not match the current feature encoder.")
             model.load_state_dict(saved["model"])
             if "optimizer" in saved:
@@ -568,7 +641,7 @@ def _(PlacementQFunction, device, feature_dim, gamma, torch):
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
             "feature_dim": feature_dim,
-            "encoding_version": 1,
+            "encoding_version": ENCODING_VERSION,
             "episodes_trained": episodes_trained,
             "gamma": gamma,
         }
@@ -595,7 +668,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    N_EPISODES = 1000
+    N_EPISODES = 2000
     train_button = mo.ui.run_button(label=f"Train next {N_EPISODES} episodes")
     train_button
     return N_EPISODES, train_button
@@ -627,7 +700,7 @@ def _(
             q_online=trained_model,
             optimizer=trained_optimizer,
             training_env=_train_env,
-            epsilon=0.02,
+            epsilon=0.1,
         )
         if (_episode - completed_episodes + 1) % 20 == 0:
             print(f"Trained {_episode - completed_episodes + 1}/{N_EPISODES} episodes")
@@ -662,9 +735,11 @@ def _(
     replay_path = checkpoint_dir / "replays" / "eval.json"
     replay_path.parent.mkdir(parents=True, exist_ok=True)
     replay_path.write_text(_dumps(replay_data))
+    _relative_dir = checkpoint_dir.relative_to(checkpoint_dir.parent.parent)
     mo.md(
-        f"Trained through **{episodes_trained} episodes**. Saved `{_latest.name}`, "
-        f"`models/{_versioned.name}`, and a greedy evaluation replay "
+        f"Trained through **{episodes_trained} episodes**. Saved "
+        f"`{_relative_dir / _latest.name}`, "
+        f"`{_relative_dir / 'models' / _versioned.name}`, and a greedy evaluation replay "
         f"with **{len(replay_data['frames'])} placements**."
     )
     return (replay_data,)
@@ -725,7 +800,7 @@ def _(mo, replay_data, replay_slider):
                     f"Piece: {_frame.get('piece', 'unknown')}, "
                     f"hold: {_frame.get('use_hold', 'unknown')}, "
                     f"rotation: {_frame.get('rotation', 'unknown')}.  \n"
-                    f"Moves: {_moves}. Reward: {_frame['reward']}; "
+                    f"Moves: {_moves}.   \nReward: {_frame['reward']}; "
                     f"lines: {_frame['lines']}; score: {_frame['score']}."
                 ),
                 replay_slider,
