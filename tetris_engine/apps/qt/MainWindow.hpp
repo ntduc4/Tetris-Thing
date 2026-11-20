@@ -2,6 +2,7 @@
 
 #include "BoardWidget.hpp"
 #include "GameConfig.hpp"
+#include "ModelOpponent.hpp"
 #include "PieceQueueWidget.hpp"
 #include "engine/Match.hpp"
 #include "engine/SoloSession.hpp"
@@ -41,6 +42,10 @@ private:
   };
 
   bool is_room() const;
+  bool is_model_match() const;
+  bool is_match() const;
+  bool can_control_model_match() const;
+  void start_model();
   void restart();
   void next_round();
   void open_rules();
@@ -54,15 +59,19 @@ private:
   void refresh();
   void clear_keys();
 
-  GameConfig _solo_rules, _room_rules;
+  GameConfig _solo_rules, _room_rules, _model_rules;
   Bindings _bindings[2];
   HeldKeys _held[2];
   uint64_t _seed = 1;
+  uint64_t _round_seed = 0;
   std::unique_ptr<SoloSession> _solo;
   std::unique_ptr<Match> _match;
+  std::unique_ptr<ModelOpponent> _model;
+  bool _model_failed = false;
   QComboBox *_mode, *_palette;
-  QPushButton *_edit, *_next;
+  QPushButton *_edit, *_next, *_rules;
   QLabel *_status[2], *_streaks[2], *_message;
+  QLabel *_titles[2];
   QWidget *_panels[2];
   BoardWidget *_boards[2];
   PieceHoldWidget *_holds[2];

@@ -17,6 +17,9 @@ public:
     return std::vector<PieceType>(count, PieceType::I);
   }
   PieceType pop() override { return PieceType::I; }
+  std::unique_ptr<Randomizer> clone() const override {
+    return std::make_unique<OnlyI>(*this);
+  }
 };
 
 class AlwaysMini : public SpinSystem {
@@ -465,14 +468,19 @@ void test_multiplayer_attack_routing_and_same_seed() {
     if (col < 3 || col > 6)
       match.player(0).paint_cell(0, col, Cell::Garbage);
   require(match.player(0).set_edit_mode(false), "editor can resume in match");
-  LockResult lock = match.hard_drop(0);
+  auto actions = match.player(0).generate_active_piece_placement();
+  auto drop = std::find_if(actions.begin(), actions.end(), [](const Placement &a) {
+    return a.moves == std::vector{Movement::HardDrop};
+  });
+  require(drop != actions.end(), "the match should expose a replayable hard drop");
+  LockResult lock = match.apply_placement(0, *drop);
   require(lock.locked && lock.lines_cleared == 1 && lock.attack_sent == 5,
-          "match should report outgoing perfect-clear attack");
+          "model placement should report outgoing perfect-clear attack");
   require(match.player(1).pending_garbage_lines() == 5,
-          "match should queue attack on the opponent");
-  match.hard_drop(1);
+          "model placement should queue attack on the opponent");
+  match.apply_placement(1, match.player(1).generate_active_piece_placement().front());
   require(match.player(1).pending_garbage_lines() == 0,
-          "incoming garbage should rise when the opponent locks");
+          "incoming garbage should rise when the opponent places");
 }
 
 void test_seeded_garbage_holes_are_symmetric_and_not_a_column_march() {

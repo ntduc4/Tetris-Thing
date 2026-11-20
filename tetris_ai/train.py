@@ -19,7 +19,7 @@ def _(tetris_py, torch):
     from dataclasses import dataclass
 
     BOARD_WIDTH = 10
-    BOARD_HEIGHT = 10
+    BOARD_HEIGHT = 40
     PREVIEW_COUNT = 5
     device = torch.device("cuda")  # ROCm uses PyTorch's cuda device API.
     if torch.version.hip is None or not torch.cuda.is_available():
@@ -884,7 +884,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    N_EPISODES = 20000
+    N_EPISODES = 1000
     q_train_button = mo.ui.run_button(label=f"Train Q-learning ({N_EPISODES} episodes)")
     mc_train_button = mo.ui.run_button(label=f"Train Monte carlo ({N_EPISODES} episodes)")
     bc_train_button = mo.ui.run_button(

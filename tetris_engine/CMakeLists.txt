@@ -42,10 +42,13 @@ if(TETRIS_BUILD_QT)
             apps/qt/BoardWidget.cpp
             apps/qt/GameConfig.cpp
             apps/qt/MainWindow.cpp
+            apps/qt/ModelOpponent.cpp
             apps/qt/PieceQueueWidget.cpp
             apps/qt/RulesDialog.cpp
         )
         target_compile_features(tetris_qt_widgets PUBLIC cxx_std_20)
+        target_compile_definitions(tetris_qt_widgets PRIVATE
+            TETRIS_AI_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tetris_ai")
         target_include_directories(tetris_qt_widgets PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/apps/qt)
         target_link_libraries(tetris_qt_widgets PUBLIC tetris_engine Qt6::Widgets)
 
@@ -171,6 +174,16 @@ if(TARGET tetris_qt_widgets)
         target_link_libraries(tetris_qt_app_tests PRIVATE tetris_qt_widgets Qt6::Test)
         add_test(NAME tetris_qt_app_tests COMMAND tetris_qt_app_tests)
         set_tests_properties(tetris_qt_app_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+        find_package(Python3 QUIET COMPONENTS Interpreter)
+        if(Python3_Interpreter_FOUND)
+            add_executable(tetris_model_match_tests tests/model_match_tests.cpp)
+            target_link_libraries(tetris_model_match_tests PRIVATE tetris_qt_widgets Qt6::Test)
+            target_compile_definitions(tetris_model_match_tests PRIVATE
+                TETRIS_TEST_MODEL_STUB="${CMAKE_CURRENT_SOURCE_DIR}/tests/model_worker_stub.py"
+                TETRIS_TEST_PYTHON="${Python3_EXECUTABLE}")
+            add_test(NAME tetris_model_match_tests COMMAND tetris_model_match_tests)
+            set_tests_properties(tetris_model_match_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+        endif()
     endif()
 endif()
 

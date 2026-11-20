@@ -83,7 +83,18 @@ LockResult Match::hard_drop(size_t index) {
     throw std::logic_error("start the round before dropping");
   if (_round_over)
     return {};
-  LockResult result = player(index).hard_drop();
+  return finish_lock(index, player(index).hard_drop());
+}
+
+LockResult Match::apply_placement(size_t index, const Placement &placement) {
+  if (!_started)
+    throw std::logic_error("start the round before placing");
+  if (_round_over)
+    return {};
+  return finish_lock(index, player(index).apply_placement(placement));
+}
+
+LockResult Match::finish_lock(size_t index, LockResult result) {
   if (result.locked) {
     if (!player(index).game_over())
       player(index).spawn_next_piece();

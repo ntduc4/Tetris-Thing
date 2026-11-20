@@ -226,7 +226,7 @@ private:
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
-  setWindowTitle("Tetris — Zen / Local Room");
+  setWindowTitle("Tetris — Solo / Local / Model");
   resize(820, 740);
   setFocusPolicy(Qt::StrongFocus);
 
@@ -240,16 +240,24 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
     load_config(settings, "room", _room_rules);
     load_bindings(settings, _bindings);
   }
+  // Model board height comes from the checkpoint when it loads. These rules
+  // are intentionally independent of saved solo/local room settings.
+  _model_rules.width = 10;
+  _model_rules.height = 10;
+  _model_rules.gravity = 0;
+  _model_rules.gravity_increase = 0;
+  _model_rules.garbage_delay = 0;
 
   auto *outer = new QVBoxLayout(this);
   auto *menu = new QHBoxLayout;
   _mode = new QComboBox(this);
   _mode->setObjectName("mode");
-  _mode->addItems({"Zen (no goal)", "Sprint", "Blitz", "Custom / Marathon", "Local room (2P)"});
+  _mode->addItems({"Zen (no goal)", "Sprint", "Blitz", "Custom / Marathon",
+                   "Local room (2P)", "Turn-based vs latest model"});
   menu->addWidget(_mode);
-  auto *rules = new QPushButton("Rules…", this);
-  rules->setObjectName("rules");
-  menu->addWidget(rules);
+  _rules = new QPushButton("Rules…", this);
+  _rules->setObjectName("rules");
+  menu->addWidget(_rules);
   auto *keys = new QPushButton("Keybinds…", this);
   keys->setObjectName("keybinds");
   menu->addWidget(keys);
@@ -280,8 +288,8 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
     _panels[i] = new QWidget(this);
     auto *column = new QVBoxLayout;
     _panels[i]->setLayout(column);
-    auto *title = new QLabel(i == 0 ? "PLAYER 1" : "PLAYER 2", _panels[i]);
-    column->addWidget(title);
+    _titles[i] = new QLabel(i == 0 ? "PLAYER 1" : "PLAYER 2", _panels[i]);
+    column->addWidget(_titles[i]);
     auto *field = new QHBoxLayout;
     field->setContentsMargins(0, 0, 0, 0);
     field->setSpacing(4);
@@ -326,13 +334,13 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
   help->setWordWrap(true);
   outer->addWidget(help);
 
-  for (auto *button : {rules, keys, start, _next, _edit})
+  for (auto *button : {_rules, keys, start, _next, _edit})
     button->setFocusPolicy(Qt::NoFocus);
   connect(_mode, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
           [this] { restart(); });
   connect(start, &QPushButton::clicked, this, [this] { restart(); });
   connect(_next, &QPushButton::clicked, this, [this] { next_round(); });
-  connect(rules, &QPushButton::clicked, this, [this] { open_rules(); });
+  connect(_rules, &QPushButton::clicked, this, [this] { open_rules(); });
   connect(keys, &QPushButton::clicked, this, [this] { open_bindings(); });
   connect(_edit, &QPushButton::clicked, this, [this] { toggle_edit(); });
   connect(_palette, QOverload<int>::of(&QComboBox::activated), this,
@@ -351,6 +359,12 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
 }
 
 bool MainWindow::is_room() const { return _mode->currentIndex() == 4; }
+bool MainWindow::is_model_match() const { return _mode->currentIndex() == 5; }
+bool MainWindow::is_match() const { return is_room() || is_model_match(); }
+bool MainWindow::can_control_model_match() const {
+  return !is_model_match() || (_model && _model->ready() &&
+                               !_model->busy() && !_model_failed);
+}
 
 const Engine *MainWindow::current_engine(size_t player) const {
   if (_match)
@@ -369,6 +383,8 @@ void MainWindow::clear_keys() {
 
 void MainWindow::restart() {
   clear_keys();
+  _model.reset();
+  _model_failed = false;
   for (int i = 0; i < 2; ++i) {
     _boards[i]->set_engine(nullptr);
     _holds[i]->set_piece(std::nullopt);
@@ -376,12 +392,15 @@ void MainWindow::restart() {
   }
   _solo.reset();
   _match.reset();
-  const uint64_t seed = _seed++;
-  if (is_room()) {
+  const uint64_t seed = _round_seed = _seed++;
+  if (is_match()) {
     std::vector<std::unique_ptr<Engine>> players;
     for (int i = 0; i < 2; ++i)
-      players.push_back(std::make_unique<Engine>(make_engine(_room_rules)));
-    _match = std::make_unique<Match>(std::move(players), _room_rules.wins_to_win);
+      players.push_back(std::make_unique<Engine>(
+          make_engine(is_model_match() ? _model_rules : _room_rules)));
+    _match = std::make_unique<Match>(
+        std::move(players), is_model_match() ? _model_rules.wins_to_win
+                                            : _room_rules.wins_to_win);
     _match->start(seed);
   } else {
     SoloSettings objective;
@@ -394,8 +413,9 @@ void MainWindow::restart() {
   }
   for (int i = 0; i < 2; ++i) {
     _boards[i]->set_engine(current_engine(i));
-    _panels[i]->setVisible(i == 0 || is_room());
+    _panels[i]->setVisible(i == 0 || is_match());
   }
+  _titles[1]->setText(is_model_match() ? "LATEST MODEL" : "PLAYER 2");
   _edit_row = std::min<int>(VisibleHeight, current_engine()->board().get_height()) - 1;
   _edit_col = current_engine()->board().get_width() / 2;
   _message->setText("Ready. Rules and keybinds can be changed from the toolbar.");
@@ -403,19 +423,71 @@ void MainWindow::restart() {
   _accumulated = std::chrono::nanoseconds{};
   refresh();
   setFocus();
+  if (is_model_match())
+    start_model();
+}
+
+void MainWindow::start_model() {
+  _model_failed = false;
+  _message->setText("Loading latest model…");
+  _model = std::make_unique<ModelOpponent>(
+      [this](int height) {
+        clear_keys();
+        if (_model_rules.height != height) {
+          _model_rules.height = height;
+          // A different encoding is a new match, not a continuation with
+          // incompatible board state. Detach widgets before replacing engines.
+          for (auto *board : _boards)
+            board->set_engine(nullptr);
+          std::vector<std::unique_ptr<Engine>> players;
+          for (int i = 0; i < 2; ++i)
+            players.push_back(std::make_unique<Engine>(make_engine(_model_rules)));
+          _match = std::make_unique<Match>(std::move(players), _model_rules.wins_to_win);
+          _match->start(_round_seed);
+          for (int i = 0; i < 2; ++i)
+            _boards[i]->set_engine(current_engine(i));
+        }
+        _message->setText("Model ready. Your turn — hard drop to make it respond.");
+        refresh();
+      },
+      [this](const Placement &placement) {
+        if (!is_model_match() || !_match || _match->round_over())
+          return;
+        try {
+          _match->apply_placement(1, placement);
+          if (!_match->round_over())
+            _message->setText("Your turn.");
+        } catch (const std::exception &error) {
+          _model_failed = true;
+          _message->setText(QString("Model placement failed: %1. Restart to retry.").arg(error.what()));
+        }
+        refresh();
+      },
+      [this](const QString &error) {
+        _model_failed = true;
+        _message->setText(QString("Model unavailable: %1 Restart to retry.").arg(error));
+        refresh();
+      }, this);
+  _model->start();
 }
 
 void MainWindow::next_round() {
   if (!_match || !_match->round_over() || _match->match_winner())
     return;
   clear_keys();
-  _match->start(_seed++);
-  _message->setText("Next round.");
+  _model.reset();
+  _round_seed = _seed++;
+  _match->start(_round_seed);
+  _message->setText(is_model_match() ? "Loading latest model…" : "Next round.");
   refresh();
   setFocus();
+  if (is_model_match())
+    start_model();
 }
 
 void MainWindow::open_rules() {
+  if (is_model_match())
+    return;
   _timer->stop();
   clear_keys();
   auto &rules = is_room() ? _room_rules : _solo_rules;
@@ -473,6 +545,8 @@ void MainWindow::paint(int row, int col, bool erase) {
 }
 
 void MainWindow::action(size_t player, Input input) {
+  if ((is_model_match() && player != 0) || !can_control_model_match())
+    return;
   Engine *game = current_engine(player);
   if (!game || game->game_over() || game->edit_mode() ||
       (_solo && _solo->finished()) || (_match && _match->round_over()))
@@ -481,15 +555,24 @@ void MainWindow::action(size_t player, Input input) {
   case Input::Left: game->try_move_left(); break;
   case Input::Right: game->try_move_right(); break;
   case Input::Down:
-    game->try_soft_drop((is_room() ? _room_rules : _solo_rules).soft_drop);
+    game->try_soft_drop((is_model_match() ? _model_rules :
+                         is_room() ? _room_rules : _solo_rules).soft_drop);
     break;
   case Input::CW: game->try_rotate_cw(); break;
   case Input::CCW: game->try_rotate_ccw(); break;
   case Input::Half: game->try_rotate_180(); break;
   case Input::Hold: game->hold(); break;
   case Input::Drop:
-    if (_match) _match->hard_drop(player);
-    else _solo->hard_drop();
+    if (_match) {
+      const LockResult lock = _match->hard_drop(player);
+      if (is_model_match() && lock.locked && !_match->round_over()) {
+        clear_keys();
+        _message->setText("Model thinking…");
+        _model->choose(_match->player(1));
+      }
+    } else {
+      _solo->hard_drop();
+    }
     break;
   default: break;
   }
@@ -522,7 +605,7 @@ void MainWindow::repeat(size_t player, const GameConfig &settings) {
 
 bool MainWindow::handle_key(int key, bool pressed) {
   if (key == Qt::Key_Enter) key = Qt::Key_Return;
-  if (key == Qt::Key_F && !is_room()) {
+  if (key == Qt::Key_F && !is_match()) {
     if (pressed) toggle_edit();
     return true;
   }
@@ -598,7 +681,11 @@ void MainWindow::frame() {
       if (!_solo->engine().edit_mode()) repeat(0, _solo_rules);
       _solo->tick();
     }
-    if (_match && !_match->round_over()) {
+    if (is_model_match() && _match && !_match->round_over() &&
+        can_control_model_match()) {
+      repeat(0, _model_rules);
+    }
+    if (is_room() && _match && !_match->round_over()) {
       repeat(0, _room_rules);
       repeat(1, _room_rules);
       _match->tick();
@@ -611,7 +698,8 @@ void MainWindow::frame() {
 void MainWindow::refresh() {
   _boards[0]->set_editable(_solo && _solo->engine().edit_mode());
   _boards[0]->set_cursor(_edit_row, _edit_col);
-  const auto &rules = is_room() ? _room_rules : _solo_rules;
+  const auto &rules = is_model_match() ? _model_rules :
+                      is_room() ? _room_rules : _solo_rules;
   for (int i = 0; i < 2; ++i) {
     const Engine *game = current_engine(i);
     if (!game) continue;
@@ -640,17 +728,21 @@ void MainWindow::refresh() {
         .arg(_match ? QString("   Wins: %1").arg(_match->wins(i)) : QString()));
     _boards[i]->update();
   }
-  _edit->setVisible(!is_room());
-  _palette->setVisible(!is_room());
+  _edit->setVisible(!is_match());
+  _palette->setVisible(!is_match());
+  _rules->setEnabled(!is_model_match());
+  _rules->setToolTip(is_model_match() ? "Model mode uses fixed 10x10 training rules." : "");
   _edit->setText(_solo && _solo->engine().edit_mode() ? "Resume (F)" : "Draw mode (F)");
-  _next->setVisible(is_room());
+  _next->setVisible(is_match());
   _next->setEnabled(_match && _match->round_over() && !_match->match_winner());
   if (_solo && _solo->finished())
     _message->setText(_solo->succeeded() ? "Goal complete! Restart to play again."
                                           : "Game over. Restart to play again.");
   if (_match && _match->round_over()) {
     QString message = _match->round_winner()
-        ? QString("Player %1 wins the round.").arg(*_match->round_winner() + 1)
+        ? is_model_match()
+            ? (*_match->round_winner() == 0 ? "You win!" : "Model wins.")
+            : QString("Player %1 wins the round.").arg(*_match->round_winner() + 1)
         : QString("Round draw.");
     if (_match->match_winner()) message += " Match won! Press Restart for a new match.";
     else message += " Press Next round.";

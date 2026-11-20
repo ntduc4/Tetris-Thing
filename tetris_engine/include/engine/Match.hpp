@@ -21,6 +21,8 @@ public:
   std::vector<TickResult> tick();
   /** Hard drop a player's piece and route its outgoing attack. */
   LockResult hard_drop(size_t player);
+  /** Apply a reachable placement and route its outgoing attack. */
+  LockResult apply_placement(size_t player, const Placement &placement);
 
   Engine &player(size_t index) { return *_players.at(index); }
   const Engine &player(size_t index) const { return *_players.at(index); }
@@ -33,6 +35,7 @@ public:
   void set_target(size_t sender, std::optional<size_t> target);
 
 private:
+  LockResult finish_lock(size_t player, LockResult result);
   void deliver(size_t sender, uint16_t lines);
   void check_winner();
 
