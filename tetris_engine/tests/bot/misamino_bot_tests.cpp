@@ -60,6 +60,53 @@ void test_legal_replayable_and_no_live_mutation() {
   }
 }
 
+void test_full_episode_matches_fresh_search() {
+  MisaMinoBot bot({.search_depth = 3, .beam_width = 12, .node_budget = 4000});
+  size_t total_reused = 0;
+  for (uint64_t seed : {31u, 42u, 93u}) {
+    auto episode_game = make_game();
+    auto reference = make_game();
+    episode_game.reset(seed);
+    reference.reset(seed);
+    require(reference.spawn_next_piece(), "reference game must start");
+    const auto episode = bot.play_episode(episode_game, 12);
+    for (const auto &turn : episode.turns) {
+      const auto selected = bot.choose(reference);
+      require(selected && same_action(*selected, turn.placement),
+              "cached episode search must choose exactly as fresh search");
+      const auto lock = reference.apply_placement(*selected);
+      require(lock.locked && lock.spin == turn.lock.spin &&
+                  lock.lines_cleared == turn.lock.lines_cleared &&
+                  lock.attack_sent == turn.lock.attack_sent &&
+                  lock.score_delta == turn.lock.score_delta,
+              "episode must record actual engine lock results");
+      if (!reference.game_over())
+        reference.spawn_next_piece();
+    }
+    require(episode.game_over == reference.game_over() &&
+                episode.truncated ==
+                    (!reference.game_over() && episode.turns.size() == 12) &&
+                episode_game.board().render() == reference.board().render() &&
+                episode_game.preview_queue() == reference.preview_queue() &&
+                episode_game.hold_piece() == reference.hold_piece() &&
+                episode_game.score() == reference.score(),
+            "episode must reproduce sequential engine play");
+    total_reused += episode.reused_searches;
+  }
+  require(total_reused > 0, "episode must reuse previous beam searches");
+
+  auto single = make_game();
+  single.reset(17);
+  const auto one = bot.play_episode(single, 1);
+  require(one.turns.size() == 1 && (one.truncated || one.game_over),
+          "piece cap must stop a generated episode");
+  try {
+    bot.play_episode(single, 0);
+    require(false, "zero piece cap must be rejected");
+  } catch (const std::invalid_argument &) {
+  }
+}
+
 void test_hold_gate_and_no_active_piece() {
   auto game = make_game();
   MisaMinoBot bot({.search_depth = 2, .beam_width = 3, .node_budget = 800});
@@ -163,6 +210,12 @@ void test_preview_boundary_and_hidden_garbage_holes() {
   require(garbage_a.pending_garbage_lines() == 3 &&
               garbage_b.pending_garbage_lines() == 3,
           "garbage lookahead must not mutate the live engine");
+  const auto episode_a = bot.play_episode(garbage_a, 1);
+  const auto episode_b = bot.play_episode(garbage_b, 1);
+  require(episode_a.turns.size() == 1 && episode_b.turns.size() == 1 &&
+              same_action(episode_a.turns[0].placement,
+                          episode_b.turns[0].placement),
+          "an episode must not choose based on secret garbage holes");
 }
 
 void paint_mini_well(Engine &game) {
@@ -265,6 +318,7 @@ void test_hold_t_spin_setup() {
 
 int main() {
   test_legal_replayable_and_no_live_mutation();
+  test_full_episode_matches_fresh_search();
   test_hold_gate_and_no_active_piece();
   test_preview_boundary_and_hidden_garbage_holes();
   test_spin_and_nonspin_same_board();

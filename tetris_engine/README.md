@@ -56,6 +56,24 @@ if (auto placement = bot.choose(game)) {
 }
 ```
 
+For an entire teacher-played episode, call `bot.play_episode(game, piece_cap)` on
+an engine that has been reset (it spawns the first piece if necessary). It
+plays through `apply_placement()` and `spawn_next_piece()`, mutates `game`, and
+returns placements and lock results for each turn, plus game-over/truncation
+flags. The bot reuses engine placement searches from overlapping states in
+the previous turn's beam, then recomputes beam rankings at the new root:
+this preserves `choose()`'s moves rather than carrying a pruned beam that
+could change the teacher's decisions. `reused_searches` counts cache hits;
+the cache is limited to one episode and only the previous turn's beam states.
+
+```cpp
+game.reset(42);
+auto episode = bot.play_episode(game, 500);
+for (const auto &turn : episode.turns) {
+  // turn.placement is the replayable path; turn.lock is the engine result.
+}
+```
+
 The optional `tetris_py` module also exposes `MisaMinoConfig` and `MisaMinoBot` (linking `tetris_bot`). In the `tetris_ai/train.py` notebook:
 
 ```python

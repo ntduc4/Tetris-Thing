@@ -318,12 +318,24 @@ PYBIND11_MODULE(tetris_py, m) {
       .def_readwrite("search_depth", &MisaMinoConfig::search_depth)
       .def_readwrite("beam_width", &MisaMinoConfig::beam_width)
       .def_readwrite("node_budget", &MisaMinoConfig::node_budget);
+  py::class_<MisaMinoEpisodeTurn>(m, "MisaMinoEpisodeTurn")
+      .def_readonly("placement", &MisaMinoEpisodeTurn::placement)
+      .def_readonly("lock", &MisaMinoEpisodeTurn::lock);
+  py::class_<MisaMinoEpisode>(m, "MisaMinoEpisode")
+      .def_readonly("turns", &MisaMinoEpisode::turns)
+      .def_readonly("game_over", &MisaMinoEpisode::game_over)
+      .def_readonly("truncated", &MisaMinoEpisode::truncated)
+      .def_readonly("reused_searches", &MisaMinoEpisode::reused_searches);
   py::class_<MisaMinoBot>(m, "MisaMinoBot",
       "Independent MisaMino-inspired bot, not a port of the original binary.")
       .def(py::init<MisaMinoConfig>(), py::arg("config") = MisaMinoConfig{})
       .def("choose", &MisaMinoBot::choose, py::arg("engine"),
            py::call_guard<py::gil_scoped_release>(),
-           "Return a replayable Placement or None without changing the engine.");
+           "Return a replayable Placement or None without changing the engine.")
+      .def("play_episode", &MisaMinoBot::play_episode, py::arg("engine"),
+           py::arg("piece_cap") = 500, py::call_guard<py::gil_scoped_release>(),
+           "Play a full episode on the engine, reusing placements searched in "
+           "the previous turn's beam. Spawns a piece if needed.");
 
   py::class_<SoloSettings>(m, "SoloSettings")
       .def(py::init<>())

@@ -8,6 +8,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -176,21 +177,79 @@ struct Candidate {
   std::string key;
 };
 
-} // namespace
+using PlacementCache = std::unordered_map<std::string, std::vector<Placement>>;
 
-MisaMinoBot::MisaMinoBot(MisaMinoConfig config) : _config(config) {
-  if (!config.search_depth || !config.beam_width || !config.node_budget)
-    throw std::invalid_argument("MisaMino search limits must be positive");
+// Placement reachability depends on the current board/piece/hold and, for
+// empty hold, the next known piece. All states created by this episode search
+// are freshly spawned, so they have the same initial movement/spin context.
+// Never inspect a simulated state's preview: it may contain pieces not visible
+// at the root of this search.
+std::string placement_key(const Engine &game,
+                          const std::vector<PieceType> &visible, size_t used) {
+  const auto &board = game.board();
+  std::string key;
+  key.reserve(board.get_width() * board.get_height() + 100);
+  for (int row = 0; row < board.get_height(); ++row)
+    for (int col = 0; col < board.get_width(); ++col)
+      key.push_back(static_cast<char>(board.get(row, col)));
+  const auto &active = *game.active_piece();
+  key += ":" + std::to_string(board.get_width()) + ":" +
+         std::to_string(board.get_height()) + ":" +
+         std::to_string(static_cast<int>(active.piece.type())) + ":" +
+         std::to_string(static_cast<int>(active.piece.rotation())) + ":" +
+         std::to_string(active.pos.row) + ":" +
+         std::to_string(active.pos.col) + ":" +
+         std::to_string(game.can_hold()) + ":" +
+         std::to_string(game.hold_piece()
+                            ? static_cast<int>(*game.hold_piece()) + 1
+                            : 0) +
+         ":" + std::to_string(game.combo()) + ":" +
+         std::to_string(game.back_to_back_count()) + ":" +
+         std::to_string(game.pending_garbage_lines()) + ":" +
+         std::to_string(game.score());
+  if (game.can_hold() && !game.hold_piece()) {
+    key += ":" + std::to_string(used < visible.size()
+                                    ? static_cast<int>(visible[used]) + 1
+                                    : 0);
+  }
+  return key;
 }
 
-std::optional<Placement> MisaMinoBot::choose(const Engine &engine) const {
+std::optional<Placement> choose_with_cache(const Engine &engine,
+                                           const MisaMinoConfig &config,
+                                           const PlacementCache *previous,
+                                           PlacementCache *current,
+                                           size_t *reused_searches) {
   if (engine.game_over() || !engine.active_piece() || engine.edit_mode())
     return std::nullopt;
 
   // Snapshot once. Neither later Engine::preview_queue() calls nor a hold at
   // the edge of the preview may reveal a new piece to this search.
   const auto visible = engine.preview_queue();
-  auto root_actions = actions(engine, 0, visible.size());
+  auto legal_actions = [&](const Engine &game, size_t used,
+                           std::vector<Placement> &uncached)
+      -> const std::vector<Placement> & {
+    if (!current) {
+      uncached = actions(game, used, visible.size());
+      return uncached;
+    }
+    auto key = placement_key(game, visible, used);
+    auto [it, inserted] = current->try_emplace(std::move(key));
+    if (inserted) {
+      if (previous) {
+        auto hit = previous->find(it->first);
+        if (hit != previous->end()) {
+          it->second = hit->second;
+          ++*reused_searches;
+          return it->second;
+        }
+      }
+      it->second = actions(game, used, visible.size());
+    }
+    return it->second;
+  };
+  std::vector<Placement> root_generated;
+  const auto &root_actions = legal_actions(engine, 0, root_generated);
   if (root_actions.empty())
     return std::nullopt;
 
@@ -209,7 +268,7 @@ std::optional<Placement> MisaMinoBot::choose(const Engine &engine) const {
   const int depth_limit =
       pending ? 1
               : static_cast<int>(
-                    std::min<size_t>(_config.search_depth, known_placements));
+                    std::min<size_t>(config.search_depth, known_placements));
 
   for (int depth = 0; depth < depth_limit; ++depth) {
     std::vector<Candidate> pool;
@@ -234,10 +293,11 @@ std::optional<Placement> MisaMinoBot::choose(const Engine &engine) const {
         }
         continue;
       }
-      auto legal = depth ? actions(parent.game, parent.used, visible.size())
-                         : root_actions;
+      std::vector<Placement> generated;
+      const auto &legal = depth ? legal_actions(parent.game, parent.used, generated)
+                                : root_actions;
       for (size_t index = 0; index < legal.size(); ++index) {
-        if (depth && expanded >= _config.node_budget) {
+        if (depth && expanded >= config.node_budget) {
           complete = false;
           break;
         }
@@ -308,7 +368,7 @@ std::optional<Placement> MisaMinoBot::choose(const Engine &engine) const {
 
     std::unordered_set<std::string> seen;
     std::vector<Node> next;
-    next.reserve(std::min(_config.beam_width, pool.size()));
+    next.reserve(std::min(config.beam_width, pool.size()));
     for (const auto &candidate : pool) {
       if (!seen.insert(candidate.key).second)
         continue;
@@ -326,12 +386,57 @@ std::optional<Placement> MisaMinoBot::choose(const Engine &engine) const {
       next.push_back({std::move(game), candidate.used, candidate.first,
                       candidate.attack, candidate.lines, candidate.spins,
                       candidate.score, candidate.terminal});
-      if (next.size() >= _config.beam_width)
+      if (next.size() >= config.beam_width)
         break;
     }
     frontier = std::move(next);
   }
   return root_actions[best_first];
+}
+
+} // namespace
+
+MisaMinoBot::MisaMinoBot(MisaMinoConfig config) : _config(config) {
+  if (!config.search_depth || !config.beam_width || !config.node_budget)
+    throw std::invalid_argument("MisaMino search limits must be positive");
+}
+
+std::optional<Placement> MisaMinoBot::choose(const Engine &engine) const {
+  return choose_with_cache(engine, _config, nullptr, nullptr, nullptr);
+}
+
+MisaMinoEpisode MisaMinoBot::play_episode(Engine &engine,
+                                         size_t piece_cap) const {
+  if (!piece_cap)
+    throw std::invalid_argument("piece_cap must be positive");
+  MisaMinoEpisode result;
+  result.game_over = engine.game_over();
+  if (engine.game_over() || engine.edit_mode())
+    return result;
+  if (!engine.active_piece() && !engine.spawn_next_piece()) {
+    result.game_over = engine.game_over();
+    return result;
+  }
+  PlacementCache previous;
+  PlacementCache current;
+  result.turns.reserve(std::min<size_t>(piece_cap, 128));
+  for (size_t turn = 0; turn < piece_cap && !engine.game_over(); ++turn) {
+    current.clear();
+    auto choice = choose_with_cache(engine, _config, &previous, &current,
+                                    &result.reused_searches);
+    if (!choice)
+      break;
+    auto lock = engine.apply_placement(*choice);
+    if (!lock.locked)
+      throw std::logic_error("teacher placement did not lock");
+    result.turns.push_back({std::move(*choice), lock});
+    if (!engine.game_over() && !engine.spawn_next_piece() && !engine.game_over())
+      throw std::logic_error("engine failed to spawn after teacher placement");
+    previous.swap(current);
+  }
+  result.game_over = engine.game_over();
+  result.truncated = !result.game_over && result.turns.size() == piece_cap;
+  return result;
 }
 
 } // namespace tetris

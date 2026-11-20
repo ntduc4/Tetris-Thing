@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 namespace tetris {
 
@@ -16,6 +17,19 @@ struct MisaMinoConfig {
   size_t beam_width = 12;
   /** Maximum simulated placements; all root actions are always examined. */
   size_t node_budget = 4000;
+};
+
+struct MisaMinoEpisodeTurn {
+  Placement placement;
+  LockResult lock;
+};
+
+struct MisaMinoEpisode {
+  std::vector<MisaMinoEpisodeTurn> turns;
+  bool game_over = false;
+  bool truncated = false;
+  /** Placement searches reused from a previous turn's beam. */
+  size_t reused_searches = 0;
 };
 
 /**
@@ -32,6 +46,13 @@ public:
 
   /** Returns nullopt if no active piece or legal placement is available. */
   std::optional<Placement> choose(const Engine &engine) const;
+
+  /**
+   * Play up to piece_cap placements on the supplied Engine, spawning when
+   * needed. Reuse placement searches from overlapping beam states without
+   * changing the search limits or choices made by choose().
+   */
+  MisaMinoEpisode play_episode(Engine &engine, size_t piece_cap = 500) const;
 
 private:
   MisaMinoConfig _config;

@@ -116,7 +116,7 @@ def _(tetris_py, torch):
                 "pieces_placed": self.pieces_placed,
             }
 
-        def legal_placements(self):
+        def legal_placements(self) -> list[tetris_py.Placement]:
             if self._seed is None:
                 raise RuntimeError("Call reset(seed) before requesting placements")
             if self.done:
@@ -171,6 +171,7 @@ def _(tetris_py, torch):
             actions = self.legal_placements()
             if not any(action is candidate for candidate in actions):
                 raise ValueError("Select a placement from this state's legal_placements()")
+            pre_b2b_count = self._engine.back_to_back_count
             height_before = self._engine.board.max_height()
             lock = self._engine.apply_placement(action)
             if not lock.locked:
@@ -185,6 +186,7 @@ def _(tetris_py, torch):
             terminated = self._engine.game_over
             truncated = not terminated and self.pieces_placed >= self.piece_cap
             self.done = terminated or truncated
+            b2b_count = self._engine.back_to_back_count
             info = {
                 "lines_cleared": lock.lines_cleared,
                 "score_delta": lock.score_delta,
@@ -193,10 +195,10 @@ def _(tetris_py, torch):
                 "attack_sent": lock.attack_sent,
                 "pieces_placed": self.pieces_placed,
                 "top_out": terminated,
+                "b2b_delta": b2b_count - pre_b2b_count
             }
             height_after = self._engine.board.max_height()
-            reward = 5.0 * lock.lines_cleared
-            reward -= 0.1 * (height_after - height_before)
+            reward = lock.attack_sent + info["b2b_delta"] + lock.lines_cleared
             if terminated:          # Top-out, not the 500-piece time limit
                 reward -= 50.0
             return self.observe(), reward, terminated, truncated, info
@@ -205,7 +207,7 @@ def _(tetris_py, torch):
     initial_observation = env.reset(seed=42)
     available_placements = env.legal_placements()
     (device, len(initial_observation["board"]), len(available_placements))
-    return PREVIEW_COUNT, available_placements, device, env
+    return PREVIEW_COUNT, PlacementEnv, available_placements, device, env
 
 
 @app.cell
@@ -587,35 +589,40 @@ def _(mo):
 
 
 @app.cell
-def _(F, device, encode, gamma, nn, np, torch):
+def _(F, PlacementEnv, device, encode, nn, np, tetris_py, torch):
     import random
 
     rng = random.Random(6789)
+
+    def get_current_action(training_env: PlacementEnv, observation, model: nn.Module, epsilon: float) -> tetris_py.Placement:
+        actions = training_env.legal_placements()
+        features = np.stack([encode(observation, a) for a in actions])
+        batch = torch.as_tensor(features, dtype=torch.float32, device=device)
+        with torch.no_grad():
+            scores = model(batch)
+        chosen_index = rng.randrange(len(actions)) if rng.random() < epsilon else int(scores.argmax().item())
+        action = actions[chosen_index]
+        return action
+
 
     def train_an_episode_q_learning(
         seed: int,
         q_online: nn.Module,
         optimizer: torch.optim.Adam,
-        training_env,
+        training_env: PlacementEnv,
+        gamma: float,
         epsilon: float = 0.05,
     ):
         observation = training_env.reset(seed)
         while True:
-            # Current action
-            actions = training_env.legal_placements()
-            features = np.stack([encode(observation, a) for a in actions])
-            batch = torch.as_tensor(features, dtype=torch.float32, device=device)
-            with torch.no_grad():
-                scores = q_online(batch)
-            chosen_index = rng.randrange(len(actions)) if rng.random() < epsilon else int(scores.argmax().item())
-            action = actions[chosen_index]
+            action = get_current_action(training_env, observation, q_online, epsilon)
+            next_observation, reward, terminated, truncated, info = training_env.step(action)
+    
             current_input = torch.as_tensor(
                 encode(observation, action), dtype=torch.float32, device=device
             ).unsqueeze(0)
-
-            # Applying action
-            next_observation, reward, terminated, truncated, info = training_env.step(action)
             prediction = q_online(current_input)[0]
+    
             observation = next_observation
 
             # Q learning target update
@@ -635,7 +642,7 @@ def _(F, device, encode, gamma, nn, np, torch):
             if terminated or truncated:
                 break
 
-    return (train_an_episode_q_learning,)
+    return get_current_action, train_an_episode_q_learning
 
 
 @app.cell(hide_code=True)
@@ -683,6 +690,64 @@ def _(F, device, encode, nn, np, torch):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ### Full episode training (Monte carlo learning)
+    """)
+    return
+
+
+@app.cell
+def _(
+    F,
+    List,
+    PlacementEnv,
+    Tuple,
+    device,
+    encode,
+    get_current_action,
+    nn,
+    tetris_py,
+    torch,
+):
+    def train_an_episode_monte_carlo(
+        seed: int,
+        q_online: nn.Module,
+        optimizer: torch.optim.Adam,
+        training_env: PlacementEnv,
+        gamma: float,
+        epsilon: float = 0.05,
+    ):
+        observation = training_env.reset(seed)
+        steps: List[Tuple[dict, tetris_py.Placement, int]] = []
+
+        # Episode generation
+        while True:
+            action = get_current_action(training_env, observation, q_online, epsilon)
+            next_observation, reward, terminated, truncated, info = training_env.step(action)
+            steps.append((observation, action, reward))
+
+            observation = next_observation
+            if terminated or truncated:
+                break
+
+        # target update
+        G = 0
+        optimizer.zero_grad(set_to_none=True)
+        for obs, act, re in reversed(steps):
+            G = re + gamma * G
+            x = torch.as_tensor(
+                encode(obs, act), dtype=torch.float32, device=device
+            ).unsqueeze(0)
+            target = torch.tensor([G], dtype=torch.float32, device=device)
+            (F.smooth_l1_loss(q_online(x), target) / len(steps)).backward()
+        optimizer.step()
+
+
+    return (train_an_episode_monte_carlo,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ### Checkpoint helpers
     """)
     return
@@ -691,16 +756,18 @@ def _(mo):
 @app.cell
 def _(ENCODING_VERSION, PlacementQFunction, device, feature_dim, gamma, torch):
     import pathlib as _pathlib
+    from typing import List, Tuple
 
     checkpoint_root = (
         _pathlib.Path("/home/ntd/Projects/tetris/tetris_ai")
         / "checkpoints" / f"encoding_v{ENCODING_VERSION}"
     )
     checkpoint_dir = checkpoint_root / "shared"
+    training_methods = ("q_learning", "monte_carlo", "behaviour_cloning")
 
     def init_training_model(method):
         """Resume shared weights; import the newest legacy model on the first run."""
-        if method not in ("q_learning", "behaviour_cloning"):
+        if method not in training_methods:
             raise ValueError(f"Unknown training method: {method}")
         model = PlacementQFunction(feature_dim).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
@@ -722,7 +789,7 @@ def _(ENCODING_VERSION, PlacementQFunction, device, feature_dim, gamma, torch):
                     saved.get("encoding_version") != ENCODING_VERSION):
                 raise ValueError("Checkpoint does not match the current feature encoder.")
             source_method = saved.get("training_method", "q_learning")
-            if source_method not in ("q_learning", "behaviour_cloning"):
+            if source_method not in training_methods:
                 raise ValueError("Checkpoint has an unknown training method.")
             model.load_state_dict(saved["model"])
             if source_method == method and "optimizer" in saved:
@@ -733,7 +800,7 @@ def _(ENCODING_VERSION, PlacementQFunction, device, feature_dim, gamma, torch):
 
     def save_training_model(method, model, optimizer, episodes_trained):
         """Keep shared versions immutable while updating the latest alias."""
-        if method not in ("q_learning", "behaviour_cloning"):
+        if method not in training_methods:
             raise ValueError(f"Unknown training method: {method}")
         checkpoint = {
             "model": model.state_dict(),
@@ -743,7 +810,7 @@ def _(ENCODING_VERSION, PlacementQFunction, device, feature_dim, gamma, torch):
             "episodes_trained": episodes_trained,
             "training_method": method,
         }
-        if method == "q_learning":
+        if method in ("q_learning", "monte_carlo"):
             checkpoint["gamma"] = gamma
         versioned = checkpoint_dir / "models" / f"episodes_{episodes_trained:06d}.pt"
         versioned.parent.mkdir(parents=True, exist_ok=True)
@@ -753,7 +820,13 @@ def _(ENCODING_VERSION, PlacementQFunction, device, feature_dim, gamma, torch):
         torch.save(checkpoint, latest)  # Update the alias; old versions remain.
         return latest, versioned
 
-    return checkpoint_dir, init_training_model, save_training_model
+    return (
+        List,
+        Tuple,
+        checkpoint_dir,
+        init_training_model,
+        save_training_model,
+    )
 
 
 @app.cell(hide_code=True)
@@ -811,13 +884,14 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    N_EPISODES = 10
+    N_EPISODES = 20000
     q_train_button = mo.ui.run_button(label=f"Train Q-learning ({N_EPISODES} episodes)")
+    mc_train_button = mo.ui.run_button(label=f"Train Monte carlo ({N_EPISODES} episodes)")
     bc_train_button = mo.ui.run_button(
-        label=f"Train behavioural cloning ({N_EPISODES} episodes)"
+        label=f"Train behavioural cloning ({N_EPISODES//40} episodes)"
     )
-    mo.hstack([q_train_button, bc_train_button], justify="start")
-    return N_EPISODES, bc_train_button, q_train_button
+    mo.hstack([q_train_button, mc_train_button, bc_train_button], justify="start")
+    return N_EPISODES, bc_train_button, mc_train_button, q_train_button
 
 
 @app.cell
@@ -826,24 +900,33 @@ def _(
     bc_train_button,
     checkpoint_dir,
     env,
+    gamma,
     init_training_model,
+    mc_train_button,
     mo,
     q_train_button,
     train_an_episode_behaviour_cloning,
+    train_an_episode_monte_carlo,
     train_an_episode_q_learning,
 ):
     mo.stop(
-        not (q_train_button.value or bc_train_button.value),
+        not (q_train_button.value or mc_train_button.value or bc_train_button.value),
         mo.md("Click a training button above."),
     )
-    if q_train_button.value and bc_train_button.value:
+    if sum((q_train_button.value, mc_train_button.value, bc_train_button.value)) != 1:
         raise RuntimeError("Run one training method at a time.")
-    training_method = "q_learning" if q_train_button.value else "behaviour_cloning"
+    if q_train_button.value:
+        training_method = "q_learning"
+    elif mc_train_button.value:
+        training_method = "monte_carlo"
+    else:
+        training_method = "behaviour_cloning"
 
     trained_model, trained_optimizer, completed_episodes = init_training_model(
         training_method
     )
-    episodes_trained = completed_episodes + N_EPISODES
+    episodes_this_run = N_EPISODES // 40 if bc_train_button.value else N_EPISODES
+    episodes_trained = completed_episodes + episodes_this_run
     _versioned = checkpoint_dir / "models" / f"episodes_{episodes_trained:06d}.pt"
     if _versioned.exists():
         raise FileExistsError(f"Refusing to overwrite {_versioned}")
@@ -857,27 +940,31 @@ def _(
                 q_online=trained_model,
                 optimizer=trained_optimizer,
                 training_env=_train_env,
+                gamma=gamma,
                 epsilon=0.1,
             )
-        else:
+        elif training_method == "behaviour_cloning":
             train_an_episode_behaviour_cloning(
                 seed=10_000 + _episode,
                 model=trained_model,
                 optimizer=trained_optimizer,
                 training_env=_train_env,
             )
+        else:
+            train_an_episode_monte_carlo(
+                seed=10_000 + _episode,
+                q_online=trained_model,
+                optimizer=trained_optimizer,
+                training_env=_train_env,
+                gamma=gamma,
+                epsilon=0.1,
+            )
         if bc_train_button.value or ((_episode - completed_episodes + 1) % 20 == 0):
             print(
                 f"{training_method}: trained "
-                f"{_episode - completed_episodes + 1}/{N_EPISODES} episodes"
+                f"{_episode - completed_episodes + 1}/{episodes_this_run} episodes"
             )
-    return (
-        checkpoint_dir,
-        episodes_trained,
-        trained_model,
-        trained_optimizer,
-        training_method,
-    )
+    return episodes_trained, trained_model, trained_optimizer, training_method
 
 
 @app.cell(hide_code=True)
@@ -1002,6 +1089,33 @@ def _(mo, replay_data, replay_slider):
     else:
         _replay_view = mo.md("No placements to display.")
     _replay_view
+    return
+
+
+@app.cell(disabled=True)
+def _(
+    ENCODING_VERSION,
+    PlacementQFunction,
+    checkpoint_dir,
+    device,
+    evaluate_episode,
+    feature_dim,
+    torch,
+):
+    saved = torch.load(
+        checkpoint_dir / "models" / "episodes_000210.pt",
+        map_location=device,
+        weights_only=True,
+    )
+    assert saved["feature_dim"] == feature_dim
+    assert saved["encoding_version"] == ENCODING_VERSION
+
+    old_model = PlacementQFunction(feature_dim).to(device)
+    old_model.load_state_dict(saved["model"])
+    old_model.eval()
+
+    replay = evaluate_episode(old_model)
+    print(len(replay["frames"]), sum(f["reward"] for f in replay["frames"]))
     return
 
 

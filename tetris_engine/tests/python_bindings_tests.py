@@ -37,6 +37,39 @@ def placement_key(placement):
 
 
 class BindingsTests(unittest.TestCase):
+    def test_misamino_full_episode_matches_stepwise_search(self):
+        cfg = t.EngineConfig()
+        cfg.height = 10
+        cfg.gravity = 0
+        cfg.gravity_increase = 0
+        game = t.Engine(cfg)
+        reference = t.Engine(cfg)
+        game.reset(42)
+        reference.reset(42)
+        self.assertTrue(reference.spawn_next_piece())
+        bot = t.MisaMinoBot()
+        with self.assertRaises(ValueError):
+            bot.play_episode(game, piece_cap=0)
+        episode = bot.play_episode(game, piece_cap=12)
+        self.assertTrue(episode.turns)
+        self.assertGreater(episode.reused_searches, 0)
+        for turn in episode.turns:
+            choice = bot.choose(reference)
+            self.assertEqual(placement_key(turn.placement), placement_key(choice))
+            lock = reference.apply_placement(choice)
+            self.assertEqual((turn.lock.spin, turn.lock.attack_sent,
+                              turn.lock.lines_cleared, turn.lock.score_delta),
+                             (lock.spin, lock.attack_sent,
+                              lock.lines_cleared, lock.score_delta))
+            if not reference.game_over:
+                reference.spawn_next_piece()
+        self.assertEqual(episode.game_over, reference.game_over)
+        self.assertEqual(episode.truncated,
+                         not episode.game_over and len(episode.turns) == 12)
+        self.assertEqual(game.board.render(), reference.board.render())
+        self.assertEqual(game.preview_queue(), reference.preview_queue())
+        self.assertEqual(game.score, reference.score)
+
     def test_misamino_bot_returns_replayable_legal_placements(self):
         cfg = t.EngineConfig()
         cfg.height = 10
