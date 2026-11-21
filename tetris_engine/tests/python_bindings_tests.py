@@ -37,6 +37,24 @@ def placement_key(placement):
 
 
 class BindingsTests(unittest.TestCase):
+    def test_guideline_attack_rule_replaces_jstris(self):
+        self.assertEqual(t.AttackRule.Guideline.name, "Guideline")
+        self.assertFalse(hasattr(t.AttackRule, "Jstris"))
+        cfg = t.EngineConfig()
+        cfg.attack = t.AttackRule.Guideline
+        game = t.Engine(cfg)
+        game.reset(i_piece_seed())
+        self.assertTrue(game.spawn_next_piece())
+        self.assertTrue(game.set_edit_mode(True))
+        for row in range(4):
+            for col in range(10):
+                if col != 5:
+                    self.assertTrue(game.paint_cell(row, col, t.Cell.T))
+        self.assertTrue(game.set_edit_mode(False))
+        self.assertTrue(game.try_rotate_cw())
+        result = game.hard_drop()
+        self.assertEqual((result.lines_cleared, result.attack_packets), (4, [14]))
+
     def test_misamino_full_episode_matches_stepwise_search(self):
         cfg = t.EngineConfig()
         cfg.height = 10

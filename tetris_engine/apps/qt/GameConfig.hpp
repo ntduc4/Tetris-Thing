@@ -7,7 +7,7 @@ namespace tetris::qtapp {
 enum class SpinRule { AllMiniPlus, AllMini, TOnly, Off };
 enum class RotationRule { SRSPlus, SRSX, Off };
 enum class BagRule { Seven, Fourteen, Random };
-enum class AttackRule { Season2, Season1, Jstris, Custom, Off };
+enum class AttackRule { Season2, Season1, Guideline, Custom, Off };
 enum class Preset { TetrioLike, Classic, Custom };
 
 struct GameConfig {

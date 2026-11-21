@@ -542,6 +542,8 @@ def _(mo):
 
 @app.cell
 def _(device, encode, env, np, torch):
+    EVAL_SEEDS = (987654321, 987654322, 987654323)
+
     def evaluate_episode(model, seed=987654321):
         """Record a greedy game without modifying the training environment."""
         eval_env = type(env)(piece_cap=env.piece_cap)  # Independent of training.
@@ -577,7 +579,73 @@ def _(device, encode, env, np, torch):
             model.train(was_training)
         return {"seed": seed, "frames": frames}
 
-    return (evaluate_episode,)
+    def evaluate_benchmark(model):
+        """Greedy fixed-seed solo games; survival is in pieces, not seconds."""
+        results = []
+        was_training = model.training
+        model.eval()
+        try:
+            with torch.no_grad():
+                for seed in EVAL_SEEDS:
+                    eval_env = type(env)(piece_cap=env.piece_cap)
+                    observation = eval_env.reset(seed)
+                    game = {
+                        "seed": seed,
+                        "score": 0,
+                        "lines_cleared": 0,
+                        "attack_sent": 0,
+                        "pieces_placed": 0,
+                        "spin_clears": 0,
+                        "perfect_clears": 0,
+                        "max_stack_height": 0,
+                        "top_out": False,
+                        "reached_piece_cap": False,
+                    }
+                    while True:
+                        actions = eval_env.legal_placements()
+                        features = np.stack([encode(observation, action) for action in actions])
+                        batch = torch.as_tensor(features, dtype=torch.float32, device=device)
+                        action = actions[int(model(batch).argmax().item())]
+                        observation, _, terminated, truncated, info = eval_env.step(action)
+                        game["score"] = observation["score"]
+                        game["lines_cleared"] += info["lines_cleared"]
+                        game["attack_sent"] += info["attack_sent"]
+                        game["pieces_placed"] = info["pieces_placed"]
+                        game["spin_clears"] += int(
+                            info["lines_cleared"] > 0 and info["spin"] != 0
+                        )
+                        game["perfect_clears"] += int(info["perfect_clear"])
+                        game["max_stack_height"] = max(
+                            game["max_stack_height"],
+                            next(
+                                (row + 1 for row in range(len(observation["board"]) - 1, -1, -1)
+                                 if any(observation["board"][row])),
+                                0,
+                            ),
+                        )
+                        if terminated or truncated:
+                            game["top_out"] = bool(terminated)
+                            game["reached_piece_cap"] = bool(truncated)
+                            results.append(game)
+                            break
+        finally:
+            model.train(was_training)
+
+        pieces = sum(game["pieces_placed"] for game in results)
+        return {
+            "seeds": list(EVAL_SEEDS),
+            "piece_cap": env.piece_cap,
+            "games": results,
+            "mean_score": sum(game["score"] for game in results) / len(results),
+            "mean_lines_cleared": sum(game["lines_cleared"] for game in results) / len(results),
+            "mean_attack_sent": sum(game["attack_sent"] for game in results) / len(results),
+            "mean_pieces_placed": pieces / len(results),
+            "piece_cap_rate": sum(game["reached_piece_cap"] for game in results) / len(results),
+            "attack_per_piece": sum(game["attack_sent"] for game in results) / max(1, pieces),
+            "lines_per_piece": sum(game["lines_cleared"] for game in results) / max(1, pieces),
+        }
+
+    return evaluate_benchmark, evaluate_episode
 
 
 @app.cell(hide_code=True)
@@ -617,12 +685,12 @@ def _(F, PlacementEnv, device, encode, nn, np, tetris_py, torch):
         while True:
             action = get_current_action(training_env, observation, q_online, epsilon)
             next_observation, reward, terminated, truncated, info = training_env.step(action)
-    
+
             current_input = torch.as_tensor(
                 encode(observation, action), dtype=torch.float32, device=device
             ).unsqueeze(0)
             prediction = q_online(current_input)[0]
-    
+
             observation = next_observation
 
             # Q learning target update
@@ -755,7 +823,10 @@ def _(mo):
 
 @app.cell
 def _(ENCODING_VERSION, PlacementQFunction, device, feature_dim, gamma, torch):
+    import json as _json
+    import os as _os
     import pathlib as _pathlib
+    import tempfile as _tempfile
     from typing import List, Tuple
 
     checkpoint_root = (
@@ -798,10 +869,22 @@ def _(ENCODING_VERSION, PlacementQFunction, device, feature_dim, gamma, torch):
             print(f"Training {method} from {source} ({source_method} weights)")
         return model, optimizer, completed
 
-    def save_training_model(method, model, optimizer, episodes_trained):
-        """Keep shared versions immutable while updating the latest alias."""
+    def save_training_model(method, model, optimizer, episodes_trained, evaluation,
+                            save_history=False):
+        """Atomically update latest; archive immutable weights every 1,000 episodes."""
         if method not in training_methods:
             raise ValueError(f"Unknown training method: {method}")
+        if not evaluation or episodes_trained < 1:
+            raise ValueError("A completed evaluation and episode count are required")
+        if save_history != (episodes_trained % 1_000 == 0):
+            raise ValueError("Archive a versioned model only every 1,000 episodes")
+        summary = {
+            "training_method": method,
+            "episodes_trained": episodes_trained,
+            "encoding_version": ENCODING_VERSION,
+            "feature_dim": feature_dim,
+            **evaluation,
+        }
         checkpoint = {
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
@@ -809,15 +892,39 @@ def _(ENCODING_VERSION, PlacementQFunction, device, feature_dim, gamma, torch):
             "encoding_version": ENCODING_VERSION,
             "episodes_trained": episodes_trained,
             "training_method": method,
+            "evaluation": summary,
         }
         if method in ("q_learning", "monte_carlo"):
             checkpoint["gamma"] = gamma
-        versioned = checkpoint_dir / "models" / f"episodes_{episodes_trained:06d}.pt"
-        versioned.parent.mkdir(parents=True, exist_ok=True)
-        with versioned.open("xb") as file:  # Never overwrite a versioned model.
-            torch.save(checkpoint, file)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
         latest = checkpoint_dir / "latest.pt"
-        torch.save(checkpoint, latest)  # Update the alias; old versions remain.
+        versioned = (checkpoint_dir / "models" / f"episodes_{episodes_trained:06d}.pt"
+                     if save_history else None)
+        if versioned is not None:
+            versioned.parent.mkdir(parents=True, exist_ok=True)
+        # A partial write must never corrupt latest.pt or leave a partial archive.
+        with _tempfile.NamedTemporaryFile(
+            mode="wb", dir=checkpoint_dir, prefix=".checkpoint-", suffix=".pt",
+            delete=False,
+        ) as file:
+            temporary = _pathlib.Path(file.name)
+            try:
+                torch.save(checkpoint, file)
+                file.flush()
+                _os.fsync(file.fileno())
+            except BaseException:
+                temporary.unlink(missing_ok=True)
+                raise
+        try:
+            if versioned is not None:
+                _os.link(temporary, versioned)  # Fails rather than overwriting history.
+            _os.replace(temporary, latest)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+        # Lightweight per-evaluation trend; versioned *model* history stays at 1,000.
+        with (checkpoint_dir / "evaluations.jsonl").open("a") as file:
+            file.write(_json.dumps(summary, sort_keys=True) + "\n")
         return latest, versioned
 
     return (
@@ -877,14 +984,18 @@ def _(mo):
     Both buttons resume the same `shared/latest.pt`; the button chooses the
     training method. On the first run, the newest existing Q or BC checkpoint
     supplies the weights. Switching methods starts a fresh optimizer. Every
-    click saves a version in `shared/models/`; original checkpoints are kept.
+    100 total episodes, evaluate greedily on three fixed seeds and atomically
+    update `shared/latest.pt`. Archive immutable models in `shared/models/`
+    every 1,000 total episodes; keep evaluation summaries in
+    `shared/evaluations.jsonl`. A final partial batch also updates `latest.pt`.
+    Survival is measured in placed pieces, since this mode has zero gravity.
     """)
     return
 
 
 @app.cell
 def _(mo):
-    N_EPISODES = 10000
+    N_EPISODES = 50000
     q_train_button = mo.ui.run_button(label=f"Train Q-learning ({N_EPISODES} episodes)")
     mc_train_button = mo.ui.run_button(label=f"Train Monte carlo ({N_EPISODES} episodes)")
     bc_train_button = mo.ui.run_button(
@@ -900,11 +1011,13 @@ def _(
     bc_train_button,
     checkpoint_dir,
     env,
+    evaluate_benchmark,
     gamma,
     init_training_model,
     mc_train_button,
     mo,
     q_train_button,
+    save_training_model,
     train_an_episode_behaviour_cloning,
     train_an_episode_monte_carlo,
     train_an_episode_q_learning,
@@ -926,13 +1039,21 @@ def _(
         training_method
     )
     episodes_this_run = (N_EPISODES // 40) if bc_train_button.value else N_EPISODES
+    if episodes_this_run < 1:
+        raise ValueError("At least one training episode is required")
     episodes_trained = completed_episodes + episodes_this_run
-    _versioned = checkpoint_dir / "models" / f"episodes_{episodes_trained:06d}.pt"
-    if _versioned.exists():
-        raise FileExistsError(f"Refusing to overwrite {_versioned}")
+    for _milestone in range(
+        (completed_episodes // 1_000 + 1) * 1_000, episodes_trained + 1, 1_000
+    ):
+        _archive = checkpoint_dir / "models" / f"episodes_{_milestone:06d}.pt"
+        if _archive.exists():
+            raise FileExistsError(f"Refusing to overwrite {_archive}")
 
     _train_env = type(env)(piece_cap=env.piece_cap)  # Leave the demo board alone.
     trained_model.train()
+    latest_evaluation = None
+    latest_checkpoint = None
+    latest_archive = None
     for _episode in range(completed_episodes, episodes_trained):
         if training_method == "q_learning":
             train_an_episode_q_learning(
@@ -959,18 +1080,38 @@ def _(
                 gamma=gamma,
                 epsilon=0.1,
             )
-        if bc_train_button.value or ((_episode - completed_episodes + 1) % 100 == 0):
-            print(
-                f"{training_method}: trained "
-                f"{_episode - completed_episodes + 1}/{episodes_this_run} episodes"
+        _finished = _episode + 1
+        if _finished % 100 == 0 or _finished == episodes_trained:
+            latest_evaluation = evaluate_benchmark(trained_model)
+            latest_checkpoint, latest_archive = save_training_model(
+                training_method, trained_model, trained_optimizer, _finished,
+                latest_evaluation, save_history=(_finished % 1_000 == 0),
             )
-    return episodes_trained, trained_model, trained_optimizer, training_method
+            print(
+                f"{training_method}: {_episode - completed_episodes + 1}/"
+                f"{episodes_this_run} episodes; saved latest at {_finished}"
+                f"{' + archived model' if latest_archive else ''}; "
+                f"eval mean score {latest_evaluation['mean_score']:.1f}, "
+                f"lines {latest_evaluation['mean_lines_cleared']:.1f}, "
+                f"attack {latest_evaluation['mean_attack_sent']:.1f}, "
+                f"survived {latest_evaluation['mean_pieces_placed']:.1f}/"
+                f"{latest_evaluation['piece_cap']} pieces, "
+                f"cap rate {latest_evaluation['piece_cap_rate']:.0%}"
+            )
+    return (
+        episodes_trained,
+        latest_archive,
+        latest_checkpoint,
+        latest_evaluation,
+        trained_model,
+        training_method,
+    )
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Save model and evaluation replay
+    ### Final evaluation replay and checkpoint summary
     """)
     return
 
@@ -980,17 +1121,17 @@ def _(
     checkpoint_dir,
     episodes_trained,
     evaluate_episode,
+    latest_archive,
+    latest_checkpoint,
+    latest_evaluation,
     mo,
-    save_training_model,
     trained_model,
-    trained_optimizer,
     training_method,
 ):
     from json import dumps as _dumps
 
-    _latest, _versioned = save_training_model(
-        training_method, trained_model, trained_optimizer, episodes_trained
-    )
+    if latest_checkpoint is None or latest_evaluation is None:
+        raise RuntimeError("Training ended without a saved checkpoint and evaluation")
     replay_data = evaluate_episode(trained_model)
     replay_data["episodes_trained"] = episodes_trained
     replay_data["training_method"] = training_method
@@ -998,11 +1139,22 @@ def _(
     replay_path.parent.mkdir(parents=True, exist_ok=True)
     replay_path.write_text(_dumps(replay_data))
     _relative_dir = checkpoint_dir.relative_to(checkpoint_dir.parent.parent)
+    _archive_text = (
+        f", and archived `{_relative_dir / 'models' / latest_archive.name}`"
+        if latest_archive else ""
+    )
     mo.md(
-        f"{training_method}: trained through **{episodes_trained} total episodes**. Saved "
-        f"`{_relative_dir / _latest.name}`, "
-        f"`{_relative_dir / 'models' / _versioned.name}`, and a greedy evaluation replay "
-        f"with **{len(replay_data['frames'])} placements**."
+        f"{training_method}: trained through **{episodes_trained} total episodes**. "
+        f"Saved `{_relative_dir / latest_checkpoint.name}`{_archive_text}. "
+        f"Greedy evaluation over {len(latest_evaluation['games'])} fixed seeds: "
+        f"mean score **{latest_evaluation['mean_score']:.1f}**, "
+        f"lines **{latest_evaluation['mean_lines_cleared']:.1f}**, "
+        f"attack **{latest_evaluation['mean_attack_sent']:.1f}**, "
+        f"pieces survived **{latest_evaluation['mean_pieces_placed']:.1f}/"
+        f"{latest_evaluation['piece_cap']}**, "
+        f"piece-cap rate **{latest_evaluation['piece_cap_rate']:.0%}**. "
+        f"Per-seed results are in `{_relative_dir / 'evaluations.jsonl'}`. "
+        f"The greedy replay has **{len(replay_data['frames'])} placements**."
     )
     return (replay_data,)
 
@@ -1102,16 +1254,16 @@ def _(
     feature_dim,
     torch,
 ):
-    saved = torch.load(
+    _saved = torch.load(
         checkpoint_dir / "models" / "episodes_000210.pt",
         map_location=device,
         weights_only=True,
     )
-    assert saved["feature_dim"] == feature_dim
-    assert saved["encoding_version"] == ENCODING_VERSION
+    assert _saved["feature_dim"] == feature_dim
+    assert _saved["encoding_version"] == ENCODING_VERSION
 
     old_model = PlacementQFunction(feature_dim).to(device)
-    old_model.load_state_dict(saved["model"])
+    old_model.load_state_dict(_saved["model"])
     old_model.eval()
 
     replay = evaluate_episode(old_model)

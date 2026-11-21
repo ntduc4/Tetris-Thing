@@ -20,6 +20,7 @@ struct AttackContext {
   uint32_t combo = 0;
   uint32_t surge_on_break = 0;
   PieceType piece = PieceType::T;
+  bool cleared_garbage = false;
 };
 
 /** Describes garbage produced by a player action. */
@@ -72,7 +73,7 @@ private:
   AttackTable _table;
 };
 
-/** TETR.IO Season 2 attack table. */
+/** Non-Quick-Play TETR.IO Season 2 attack (downward combo rounding and surge). */
 class TetrioSS2 : public AttackScheme {
 public:
   uint16_t garbage_to_send(const AttackContext &ctx) const override;
@@ -94,12 +95,12 @@ public:
     return std::make_unique<TetrioSS1>(*this);
   }
 };
-/** Jstris-style attack table. */
-class JSTris : public AttackScheme {
+/** Guideline-style base attacks with the standard (TOJ) additive combo table. */
+class GuidelineAttack : public AttackScheme {
 public:
   uint16_t garbage_to_send(const AttackContext &ctx) const override;
   std::unique_ptr<AttackScheme> clone() const override {
-    return std::make_unique<JSTris>(*this);
+    return std::make_unique<GuidelineAttack>(*this);
   }
 };
 

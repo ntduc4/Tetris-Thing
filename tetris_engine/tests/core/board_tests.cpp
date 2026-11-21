@@ -188,6 +188,24 @@ void test_clear_lines_resets_touch_max_height() {
           "clearing lines resets the touch max height flag");
 }
 
+void test_clear_lines_reports_only_cleared_garbage() {
+  using namespace tetris;
+  Board board(4, 4);
+  for (uint16_t col = 0; col < board.get_width(); ++col)
+    board.set(0, col, Cell::T);
+  board.set(1, 0, Cell::Garbage);
+  bool cleared_garbage = true;
+  require(board.clear_lines(&cleared_garbage) == 1 && !cleared_garbage &&
+              board.get(0, 0) == Cell::Garbage,
+          "garbage left above a normal clear must not count as cleared");
+  for (uint16_t col = 1; col < board.get_width(); ++col)
+    board.set(0, col, Cell::T);
+  require(board.clear_lines(&cleared_garbage) == 1 && cleared_garbage,
+          "a full row with garbage must report garbage cleared");
+  require(board.clear_lines(&cleared_garbage) == 0 && !cleared_garbage,
+          "no clear must reset the reported garbage flag");
+}
+
 void test_add_garbage_inserts_rows_and_tracks_top_out() {
   using namespace tetris;
 
@@ -250,6 +268,7 @@ int main() {
   test_board_grounded_checks_floor_stack_and_invalid_piece();
   test_clear_lines_handles_none_single_multiple_and_unclearable();
   test_clear_lines_resets_touch_max_height();
+  test_clear_lines_reports_only_cleared_garbage();
   test_add_garbage_inserts_rows_and_tracks_top_out();
   test_add_garbage_caps_at_remaining_height();
   return 0;

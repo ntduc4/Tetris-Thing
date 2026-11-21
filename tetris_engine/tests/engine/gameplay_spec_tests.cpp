@@ -42,12 +42,12 @@ Engine make_game(Board board = Board(10, 24), double gravity = 1.0,
                 std::make_unique<TetrioSS2>(), 5, 3, 10, gravity, 0, 100, delay);
 }
 
-void fill_quad_well(Engine &game) {
+void fill_quad_well(Engine &game, Cell fill = Cell::T) {
   require(game.set_edit_mode(true), "editing should allow a quad setup");
   for (uint16_t row = 0; row < 4; ++row)
     for (uint16_t col = 0; col < 10; ++col)
       if (col != 5)
-        require(game.paint_cell(row, col, Cell::Garbage),
+        require(game.paint_cell(row, col, fill),
                 "quad rows should be paintable");
   require(game.set_edit_mode(false) && game.try_rotate_cw(),
           "vertical I should fit the quad well");
@@ -104,6 +104,25 @@ void test_line_clear_score_and_attack() {
   require(game.last_lock_result().has_value(), "last lock should be observable");
 }
 
+void test_season_two_garbage_clear_bonus() {
+  auto quad_attack = [](Cell fill) {
+    Board board(10, 24);
+    board.set(4, 9, Cell::T); // Avoid an All Clear bonus.
+    Engine game(board, std::make_unique<SRS>(), std::make_unique<OnlyI>(),
+                std::make_unique<TSpin>(), std::make_unique<Classical>(),
+                std::make_unique<TetrioSS2>(), 5, 3, 10, 0);
+    require(game.spawn_next_piece(), "quad needs a piece");
+    fill_quad_well(game, fill);
+    LockResult result = game.hard_drop();
+    require(result.lines_cleared == 4 && !result.perfect_clear,
+            "quad setup must clear four lines without an All Clear");
+    return result.attack_sent;
+  };
+  require(quad_attack(Cell::T) == 4 &&
+              quad_attack(Cell::Garbage) == 5,
+          "Season 2 adds one line only when a quad clears garbage blocks");
+}
+
 void test_season_two_streak_combo_and_surge() {
   Engine game(Board(10, 24), std::make_unique<SRS>(),
               std::make_unique<OnlyI>(), std::make_unique<TSpin>(),
@@ -142,11 +161,15 @@ void test_season_two_streak_combo_and_surge() {
               game.surge_charge() == 0 && game.combo() == 0,
           "a normal single should release three surge packets, then reset B2B and combo");
   require(TetrioSS2{}.garbage_to_send(AttackContext{
-              .lines_cleared = 4, .perfect_clear = true, .combo = 5}) == 5 &&
-              TetrioSS2{}.garbage_to_send(AttackContext{
-                  .lines_cleared = 2, .spin = SpinType::Mini,
-                  .piece = PieceType::O}) == 0,
-          "Season 2 All Clears send five and non-T All-Minis send no base attack");
+               .lines_cleared = 4, .perfect_clear = true, .combo = 5}) == 14 &&
+               TetrioSS2{}.garbage_to_send(AttackContext{
+                   .lines_cleared = 2, .spin = SpinType::Mini,
+                   .piece = PieceType::O}) == 1,
+           "Season 2 All Clears add five to the multiplied clear attack");
+  require(TetrioSS2{}.garbage_packets(AttackContext{
+               .lines_cleared = 4, .perfect_clear = true, .combo = 5}) ==
+               std::vector<uint16_t>({9, 5}),
+           "Season 2 All Clear must form a separate, unmultiplied packet");
   require(TetrioSS2{}.garbage_packets(AttackContext{
               .lines_cleared = 4, .surge_on_break = 4}) ==
               std::vector<uint16_t>({4, 2, 1, 1}),
@@ -160,6 +183,44 @@ void test_season_two_streak_combo_and_surge() {
   require(game.back_to_back_count() == 0 && game.combo() == 0 &&
               game.surge_charge() == 0,
           "reset must clear all visible streaks");
+}
+
+void test_combo_singles_route_attack_by_rule() {
+  auto play_singles = [](std::unique_ptr<AttackScheme> scheme,
+                         const std::vector<uint16_t> &expected) {
+    std::vector<std::unique_ptr<Engine>> players;
+    players.push_back(std::make_unique<Engine>(
+        Board(10, 24), std::make_unique<SRS>(), std::make_unique<OnlyI>(),
+        std::make_unique<TSpin>(), std::make_unique<Classical>(),
+        std::move(scheme), 5, 3, 10, 0));
+    players.push_back(std::make_unique<Engine>(
+        Board(10, 24), std::make_unique<SRS>(), std::make_unique<OnlyI>(),
+        std::make_unique<TSpin>(), std::make_unique<Classical>(),
+        nullptr, 5, 3, 10, 0));
+    Match match(std::move(players));
+    match.start(42);
+    uint32_t delivered = 0;
+    for (size_t i = 0; i < expected.size(); ++i) {
+      Engine &sender = match.player(0);
+      require(sender.set_edit_mode(true), "prepare non-perfect-clear single");
+      for (uint16_t col = 0; col < 10; ++col)
+        if (col < 3 || col > 6)
+          require(sender.paint_cell(0, col, Cell::Garbage),
+                  "fill a single-line I well");
+      require(sender.paint_cell(1, 9, Cell::Garbage) &&
+                  sender.set_edit_mode(false), "keep a cell above the clear");
+      LockResult result = match.hard_drop(0);
+      delivered += expected[i];
+      require(result.lines_cleared == 1 && !result.perfect_clear &&
+                  result.attack_sent == expected[i] && sender.combo() == i &&
+                  match.player(1).pending_garbage_lines() == delivered,
+              "each combo single must deliver the selected rule's attack");
+    }
+  };
+  play_singles(std::make_unique<TetrioSS2>(),
+               {0, 0, 1, 1, 1, 1, 2});
+  play_singles(std::make_unique<GuidelineAttack>(),
+               {0, 0, 1, 1, 2, 2, 3});
 }
 
 void test_season_two_non_t_minis_keep_b2b() {
@@ -193,8 +254,9 @@ void test_season_two_surge_routing() {
             "room player should build a five-quad surge");
   }
   require(match.player(0).surge_charge() == 4 &&
-              match.player(1).pending_garbage_packets() == 5,
-          "room players should maintain separate surge and garbage states");
+              match.player(1).pending_garbage_packets() == 10 &&
+              match.player(1).pending_garbage_lines() == 59,
+           "room players should maintain separate surge and garbage states");
   Engine &sender = match.player(0);
   require(sender.set_edit_mode(true), "room single setup should be editable");
   for (uint16_t col = 0; col < 10; ++col)
@@ -204,13 +266,13 @@ void test_season_two_surge_routing() {
   require(sender.set_edit_mode(false), "room single setup should resume");
   sender.receive_garbage(1, 5);
   LockResult released = match.hard_drop(0);
-  require(released.attack_sent == 3 &&
-              released.attack_packets == std::vector<uint16_t>({1, 1, 1}) &&
+  require(released.attack_sent == 4 &&
+              released.attack_packets == std::vector<uint16_t>({2, 1, 1}) &&
               sender.pending_garbage_lines() == 0 &&
-              match.player(1).pending_garbage_packets() == 8 &&
-              match.player(1).pending_garbage_lines() == 28 &&
+              match.player(1).pending_garbage_packets() == 13 &&
+              match.player(1).pending_garbage_lines() == 63 &&
               match.player(1).surge_charge() == 0,
-          "surge must cancel incoming first, then arrive as three separate attacks");
+           "combo attack must cancel incoming first, then surge arrives in three packets");
 }
 
 void test_spin_modes_and_dynamic_tables() {
@@ -303,13 +365,14 @@ void test_garbage_travel_clear_and_cancellation() {
   game.receive_garbage(12, 3);
   fill_quad_well(game);
   LockResult clear = game.hard_drop();
-  require(clear.lines_cleared == 4 && clear.attack_sent == 0 &&
-              game.pending_garbage_lines() == 7 && game.board().max_height() == 0,
+  require(clear.lines_cleared == 4 && clear.perfect_clear &&
+              clear.attack_sent == 0 && game.pending_garbage_lines() == 3 &&
+              game.board().max_height() == 0,
           "a line clear should cancel pending garbage before travel ends, without rising");
   for (int i = 0; i < 19; ++i)
-    game.tick();
+  game.tick();
   require(game.spawn_next_piece() && game.hard_drop().locked &&
-              game.pending_garbage_lines() == 7 && game.board().max_height() < 8,
+              game.pending_garbage_lines() == 3 && game.board().max_height() < 8,
           "a non-clear before the travel delay ends must tank all queued lines");
   game.tick();
   require(game.spawn_next_piece() && game.hard_drop().locked &&
@@ -538,7 +601,9 @@ int main() {
   test_seeded_bags_and_kicks();
   test_lock_delay_and_reset();
   test_line_clear_score_and_attack();
+  test_season_two_garbage_clear_bonus();
   test_season_two_streak_combo_and_surge();
+  test_combo_singles_route_attack_by_rule();
   test_season_two_non_t_minis_keep_b2b();
   test_season_two_surge_routing();
   test_spin_modes_and_dynamic_tables();

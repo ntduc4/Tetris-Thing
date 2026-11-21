@@ -28,8 +28,8 @@ public:
   /** Returns whether a position is occupied or outside the board. */
   bool occupied(uint16_t row, uint16_t col) const;
 
-  /** Clears full clearable lines and returns the number cleared. */
-  uint16_t clear_lines();
+  /** Clears full clearable lines; optionally reports whether any contained garbage. */
+  uint16_t clear_lines(bool *cleared_garbage = nullptr);
 
   /** Returns the stack height of a column. */
   uint16_t column_height(uint16_t col) const;

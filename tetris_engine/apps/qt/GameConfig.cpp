@@ -44,7 +44,7 @@ Engine make_engine(const GameConfig &config) {
   switch (config.attack) {
   case AttackRule::Season2: attack = std::make_unique<TetrioSS2>(); break;
   case AttackRule::Season1: attack = std::make_unique<TetrioSS1>(); break;
-  case AttackRule::Jstris: attack = std::make_unique<JSTris>(); break;
+  case AttackRule::Guideline: attack = std::make_unique<GuidelineAttack>(); break;
   case AttackRule::Custom: attack = std::make_unique<TableAttack>(config.attacks); break;
   case AttackRule::Off: break;
   }

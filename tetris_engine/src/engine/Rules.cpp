@@ -241,27 +241,62 @@ uint16_t TableAttack::garbage_to_send(const AttackContext &ctx) const {
 }
 
 namespace {
+uint32_t standard_attack_weight(const AttackContext &ctx) {
+  const size_t lines = std::min<size_t>(ctx.lines_cleared, 4);
+  constexpr std::array<uint16_t, 5> normal{0, 0, 1, 2, 4};
+  constexpr std::array<uint16_t, 5> mini{0, 0, 1, 2, 4};
+  constexpr std::array<uint16_t, 5> full{0, 2, 4, 6, 8};
+  return ctx.spin == SpinType::Full ? full[lines]
+       : ctx.spin == SpinType::Mini ? mini[lines] : normal[lines];
+}
+
+uint16_t capped_attack(uint64_t lines) {
+  return static_cast<uint16_t>(std::min<uint64_t>(lines, UINT16_MAX));
+}
+
 uint16_t season_two_base(const AttackContext &ctx) {
-  if (ctx.perfect_clear)
-    return 5;
-  if (ctx.spin == SpinType::Mini && ctx.piece != PieceType::T)
+  if (!ctx.lines_cleared)
     return 0;
-  return TableAttack{}.garbage_to_send(ctx);
+  // Non-Quick-Play TETR.IO uses DOWN rounding. Combo scales the clear's
+  // weight; zero-weight clears use logarithmic combo attack from combo x2.
+  uint32_t weight = standard_attack_weight(ctx);
+  if (ctx.spin == SpinType::Full && ctx.lines_cleared >= 4)
+    weight = 10;
+  uint64_t attack = static_cast<uint64_t>(weight) * (4u + uint64_t{ctx.combo}) / 4u;
+  if (ctx.combo >= 2)
+    attack = std::max<uint64_t>(
+        attack, static_cast<uint64_t>(std::floor(
+                    std::log1p(1.25 * static_cast<double>(ctx.combo)))));
+  // Charging (Season 2) adds a fixed B2B line after the combo multiplier.
+  if (ctx.back_to_back &&
+      (ctx.spin != SpinType::None || ctx.lines_cleared >= 4))
+    ++attack;
+  // TETRA LEAGUE Season 2's garbage-special bonus is flat, not multiplied.
+  if (ctx.cleared_garbage &&
+      (ctx.lines_cleared >= 4 || ctx.spin != SpinType::None))
+    ++attack;
+  return capped_attack(attack);
 }
 } // namespace
 
 uint16_t TetrioSS2::garbage_to_send(const AttackContext &ctx) const {
-  uint64_t attack = season_two_base(ctx);
-  return static_cast<uint16_t>(std::min<uint64_t>(attack + ctx.surge_on_break,
-                                                   UINT16_MAX));
+  return capped_attack(uint64_t{season_two_base(ctx)} +
+                       (ctx.lines_cleared && ctx.perfect_clear ? 5u : 0u) +
+                       ctx.surge_on_break);
 }
 
 std::vector<uint16_t> TetrioSS2::garbage_packets(const AttackContext &ctx) const {
   uint16_t base = season_two_base(ctx);
-  uint32_t surge = garbage_to_send(ctx) - base;
+  uint16_t remainder = garbage_to_send(ctx) - base;
   std::vector<uint16_t> packets;
   if (base)
     packets.push_back(base);
+  // All Clear is an independent, unmultiplied 5-line attack.
+  const uint16_t all_clear =
+      ctx.lines_cleared && ctx.perfect_clear ? std::min<uint16_t>(5, remainder) : 0;
+  if (all_clear)
+    packets.push_back(all_clear);
+  uint32_t surge = remainder - all_clear;
   // Round remainders into the first two packets.
   for (uint32_t part : {(surge + 2) / 3, (surge + 1) / 3, surge / 3})
     if (part)
@@ -281,7 +316,20 @@ uint16_t TetrioSS1::garbage_to_send(const AttackContext &ctx) const {
   return TableAttack(table).garbage_to_send(ctx);
 }
 
-uint16_t JSTris::garbage_to_send(const AttackContext &ctx) const {
-  return TetrioSS1{}.garbage_to_send(ctx);
+uint16_t GuidelineAttack::garbage_to_send(const AttackContext &ctx) const {
+  if (!ctx.lines_cleared)
+    return 0;
+  // Guideline Standard (Tetris Online Japan) combo bonuses, additive rather
+  // than TETR.IO's multiplier; capped at +5 from combo x11 onward.
+  constexpr std::array<uint16_t, 13> combo{0, 0, 1, 1, 2, 2, 3,
+                                          3, 4, 4, 4, 5, 5};
+  uint64_t attack = standard_attack_weight(ctx);
+  if (ctx.back_to_back &&
+      (ctx.spin != SpinType::None || ctx.lines_cleared >= 4))
+    ++attack;
+  attack += combo[std::min<size_t>(ctx.combo, combo.size() - 1)];
+  if (ctx.perfect_clear)
+    attack += 10;
+  return capped_attack(attack);
 }
 } // namespace tetris

@@ -276,11 +276,16 @@ int main(int argc, char **argv) {
   GameConfig selected;
   RulesDialog selection(selected, true);
   selection.findChild<QComboBox *>("rotationRule")->setCurrentIndex(1);
+  auto *attack_choice = selection.findChild<QComboBox *>("attackRule");
+  check(attack_choice->itemText(2).contains("Guideline"),
+        "the former Jstris rule should be labeled Guideline");
+  attack_choice->setCurrentIndex(2);
   selection.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
-  check(selected.rotation == RotationRule::SRSX &&
+  check(selected.attack == AttackRule::Guideline &&
+            selected.rotation == RotationRule::SRSX &&
             SRSX{}.kick_offsets(PieceType::I, Rotation::North, Rotation::East) !=
                 SRSPlus{}.kick_offsets(PieceType::I, Rotation::North, Rotation::East),
-        "the Qt rotation selector must offer a distinct SRS-X rule");
+        "Qt should expose Guideline attack at the old selector index and SRS-X rotation");
   int before_room = window.current_engine(0)->active_piece()->pos.row;
   window.current_engine(0)->tick();
   window.current_engine(1)->tick();

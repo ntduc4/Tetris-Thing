@@ -167,7 +167,7 @@ void test_same_context_restore_and_repeated_rollouts() {
               timed.hold_piece() == timed_checkpoint.hold_piece() &&
               timed.can_hold() == timed_checkpoint.can_hold(),
           "restore must recover timing, incoming garbage and hold state");
-  timed.set_attack_scheme(std::make_unique<tetris::JSTris>());
+  timed.set_attack_scheme(std::make_unique<tetris::GuidelineAttack>());
   try {
     timed.restore(timed_checkpoint);
     require(false, "rule changes must invalidate earlier checkpoints");

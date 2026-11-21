@@ -116,7 +116,7 @@ RulesDialog::RulesDialog(GameConfig &config, bool multiplayer, QWidget *parent)
   _rotation = options({"SRS+", "SRS-X", "No rotation"}, rules);
   _rotation->setObjectName("rotationRule");
   _bag = options({"7-bag", "14-bag", "Random"}, rules);
-  _attack = options({"Season 2-like", "Season 1-like", "Jstris-like",
+  _attack = options({"Season 2 (1v1 attack)", "Season 1-like", "Guideline (standard combo)",
                      "Custom table", "No attack"}, rules);
   _attack->setObjectName("attackRule");
   r->addRow("Spin detection:", _spin);

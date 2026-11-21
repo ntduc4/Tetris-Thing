@@ -646,7 +646,8 @@ LockResult Engine::lock_active_piece() {
     _board.set(o.row + p.pos.row, o.col + p.pos.col, p.piece.cell_type());
 
   _active_piece = std::nullopt;
-  uint16_t lc = _board.clear_lines();
+  bool cleared_garbage = false;
+  uint16_t lc = _board.clear_lines(&cleared_garbage);
   bool perfect_clear = lc > 0 && _board.max_height() == 0;
   if (lc != 0) {
     _combo = _last_lock_result && _last_lock_result->lines_cleared ? _combo + 1 : 0;
@@ -683,12 +684,13 @@ LockResult Engine::lock_active_piece() {
   if (_attack_scheme)
     outgoing_packets = _attack_scheme->garbage_packets(
         AttackContext{.lines_cleared = lc,
-                      .spin = spin,
-                      .perfect_clear = perfect_clear,
-                      .back_to_back = back_to_back_bonus,
-                      .combo = _combo,
-                      .surge_on_break = surge_on_break,
-                      .piece = p.piece.type()});
+                       .spin = spin,
+                       .perfect_clear = perfect_clear,
+                       .back_to_back = back_to_back_bonus,
+                       .combo = _combo,
+                       .surge_on_break = surge_on_break,
+                       .piece = p.piece.type(),
+                       .cleared_garbage = cleared_garbage});
   // Full blocking: cancel oldest incoming lines before anything is sent.
   for (auto &packet : _pending_garbage) {
     for (auto &outgoing : outgoing_packets) {

@@ -127,18 +127,22 @@ class ModelOpponentTests(unittest.TestCase):
 
     @unittest.skipUnless(CHECKPOINT.is_file(), "no saved model checkpoint")
     def test_saved_checkpoint_responds_over_protocol(self):
+        saved = qt_opponent.torch.load(
+            CHECKPOINT, map_location="cpu", weights_only=True
+        )
+        height = qt_opponent.board_height_from_features(saved["feature_dim"])
         request = {
-            "board": [[0] * 10 for _ in range(10)],
+            "board": [[0] * 10 for _ in range(height)],
             "active_piece": 0,
             "rotation": 0,
-            "position": [6, 3],
+            "position": [height - 4, 3],
             "hold_piece": None,
             "can_hold": True,
             "preview": [1, 2, 3, 4, 5],
             "pending_garbage_lines": 0,
             "actions": [
                 {"type": 0, "final_rotation": 0, "final_pos": [0, col],
-                 "drop_distance": 6, "use_hold": False,
+                 "drop_distance": height - 4, "use_hold": False,
                  "cells": [[0, col + offset] for offset in range(4)]}
                 for col in (0, 3)
             ],
@@ -148,7 +152,7 @@ class ModelOpponentTests(unittest.TestCase):
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
         ) as process:
             self.assertEqual(json.loads(process.stdout.readline()),
-                             {"ready": True, "width": 10, "height": 10})
+                             {"ready": True, "width": 10, "height": height})
             process.stdin.write(json.dumps(request) + "\n")
             process.stdin.flush()
             result = json.loads(process.stdout.readline())

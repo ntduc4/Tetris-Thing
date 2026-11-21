@@ -103,14 +103,18 @@ std::vector<std::vector<Cell>> Board::render() const <%
   return res;
 %>
 
-uint16_t Board::clear_lines() <%
+uint16_t Board::clear_lines(bool *cleared_garbage) <%
   uint16_t res = 0;
   bool full = true;
+  bool row_has_garbage = false;
+  if (cleared_garbage)
+    *cleared_garbage = false;
 
   int curLine = 0;
   for (int i = 0; i < _cells.size(); i++) {
     if (i % _width == 0) {
       full = true;
+      row_has_garbage = false;
     }
     int j = i - res * _width;
     if (j < 0 || j >= _cells.size())
@@ -120,9 +124,13 @@ uint16_t Board::clear_lines() <%
       _cells[i] = Cell::Empty;
     if (_cells[j] == Cell::Empty || _cells[j] == Cell::Unclearable)
       full = false;
+    if (_cells[j] == Cell::Garbage)
+      row_has_garbage = true;
 
     if (i % _width == _width - 1 && full) {
       full = false;
+      if (cleared_garbage && row_has_garbage)
+        *cleared_garbage = true;
       res++;
     }
   }
