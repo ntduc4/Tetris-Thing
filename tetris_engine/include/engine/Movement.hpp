@@ -46,7 +46,7 @@ struct Placement {
     piece.rotate_to(final_rotation);
     std::vector<Position> result;
     result.reserve(4);
-    for (Offset offset : piece.current_shape())
+    for (Offset offset : piece.current_shape_array())
       result.push_back({static_cast<int16_t>(final_pos.row + offset.row),
                         static_cast<int16_t>(final_pos.col + offset.col)});
     return result;

@@ -34,6 +34,8 @@ public:
 
   /** Returns the occupied cells in the piece's local 4x4 coordinate space. */
   std::vector<Offset> current_shape() const;
+  /** Fixed-size, allocation-free shape for hot collision/search paths. */
+  std::array<Offset, 4> current_shape_array() const;
 
   /** Renders the piece into a 4x4 cell grid. */
   std::array<std::array<Cell, PieceDimension>, PieceDimension> render() const;

@@ -104,6 +104,23 @@ void test_piece_current_shape_and_render() {
           "east I piece renders as a vertical line");
 }
 
+void test_fixed_shape_matches_public_shape() {
+  using namespace tetris;
+  for (PieceType type : {PieceType::I, PieceType::O, PieceType::T, PieceType::S,
+                         PieceType::Z, PieceType::J, PieceType::L}) {
+    Piece piece = get_from_piece_type(type);
+    for (int rotation = 0; rotation < static_cast<int>(Rotation::Count); ++rotation) {
+      piece.rotate_to(static_cast<Rotation>(rotation));
+      const auto fixed = piece.current_shape_array();
+      const auto public_shape = piece.current_shape();
+      for (size_t cell = 0; cell < fixed.size(); ++cell)
+        require(fixed[cell].row == public_shape[cell].row &&
+                    fixed[cell].col == public_shape[cell].col,
+                "allocation-free shape must preserve the public shape for every orientation");
+    }
+  }
+}
+
 void test_piece_render_uses_piece_cell_type() {
   using namespace tetris;
 
@@ -136,6 +153,7 @@ int main() {
   test_piece_spawn_defaults();
   test_piece_rotation_methods();
   test_piece_current_shape_and_render();
+  test_fixed_shape_matches_public_shape();
   test_piece_render_uses_piece_cell_type();
   test_cells_of_returns_absolute_cell_positions();
   return 0;

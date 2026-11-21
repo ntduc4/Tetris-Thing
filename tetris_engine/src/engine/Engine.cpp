@@ -7,13 +7,13 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <deque>
+#include <functional>
 #include <limits>
 #include <numeric>
 #include <optional>
-#include <set>
 #include <stdexcept>
 #include <tuple>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -40,6 +40,17 @@ bool rotation_move(Movement move) {
 
 using SearchKey = std::tuple<int, int, int, int, int, int, int>;
 using PlacementKey = std::tuple<int, int, int, SpinType>;
+
+template <typename Tuple> struct TupleHash {
+  size_t operator()(const Tuple &key) const noexcept {
+    size_t hash = 0;
+    std::apply([&](const auto &...values) {
+      ((hash ^= std::hash<int>{}(static_cast<int>(values)) +
+                0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2)), ...);
+    }, key);
+    return hash;
+  }
+};
 
 SearchKey search_key(const ActivePiece &piece, const SpinContext &context) {
   bool rotated = rotation_move(context.last_movement);
@@ -518,7 +529,7 @@ std::optional<ActivePiece> Engine::ghost_piece() const {
 std::vector<std::vector<Cell>> Engine::render() const {
   auto cells = _board.render();
   if (_active_piece && !_board.collide(*_active_piece)) {
-    for (Offset offset : _active_piece->piece.current_shape()) {
+    for (Offset offset : _active_piece->piece.current_shape_array()) {
       int row = _active_piece->pos.row + offset.row;
       int col = _active_piece->pos.col + offset.col;
       if (row >= 0 && col >= 0 && row < _board.get_height() &&
@@ -631,7 +642,7 @@ LockResult Engine::lock_active_piece() {
     return {};
   SpinType spin = _spin_system ? _spin_system->detect(_board, p, _spin_context)
                                : SpinType::None;
-  for (Offset o : p.piece.current_shape())
+  for (Offset o : p.piece.current_shape_array())
     _board.set(o.row + p.pos.row, o.col + p.pos.col, p.piece.cell_type());
 
   _active_piece = std::nullopt;
@@ -764,22 +775,25 @@ std::vector<Placement> Engine::search_placements(bool use_hold) const {
     ActivePiece piece;
     SpinContext spin;
     uint32_t soft_drop_cells;
-    std::vector<Movement> moves;
+    size_t parent;
+    Movement move;
   };
-  std::deque<Node> queue;
-  std::set<SearchKey> visited;
-  std::set<PlacementKey> endpoints;
+  const size_t root = std::numeric_limits<size_t>::max();
+  std::vector<Node> queue;
+  std::unordered_set<SearchKey, TupleHash<SearchKey>> visited;
+  std::unordered_set<PlacementKey, TupleHash<PlacementKey>> endpoints;
   queue.push_back({*scratch._active_piece, scratch._spin_context,
-                   scratch._soft_drop_cells, {}});
+                   scratch._soft_drop_cells, root, Movement::HardDrop});
   visited.insert(search_key(queue.front().piece, queue.front().spin));
   std::vector<Placement> placements;
   constexpr std::array moves = {Movement::Left, Movement::Right,
                                 Movement::SoftDrop, Movement::CW,
                                 Movement::CCW, Movement::HalfRotation};
 
-  while (!queue.empty()) {
-    Node node = std::move(queue.front());
-    queue.pop_front();
+  // Keep parent indices rather than copying the entire path for every
+  // reachable movement state. Reconstruct only distinct locking paths.
+  for (size_t head = 0; head < queue.size(); ++head) {
+    const Node node = queue[head];
     scratch._active_piece = node.piece;
     scratch._spin_context = node.spin;
     auto ghost = scratch.ghost_piece();
@@ -797,7 +811,10 @@ std::vector<Placement> Engine::search_placements(bool use_hold) const {
     if (endpoints.insert({ghost->pos.row, ghost->pos.col,
                           static_cast<int>(ghost->piece.rotation()),
                           effective_spin}).second) {
-      auto path = node.moves;
+      std::vector<Movement> path;
+      for (size_t at = head; queue[at].parent != root; at = queue[at].parent)
+        path.push_back(queue[at].move);
+      std::reverse(path.begin(), path.end());
       path.push_back(Movement::HardDrop);
       placements.push_back({.moves = std::move(path),
                             .type = ghost->piece.type(),
@@ -819,10 +836,8 @@ std::vector<Placement> Engine::search_placements(bool use_hold) const {
         continue;
       SearchKey key = search_key(*scratch._active_piece, scratch._spin_context);
       if (visited.insert(key).second) {
-        auto path = node.moves;
-        path.push_back(move);
         queue.push_back({*scratch._active_piece, scratch._spin_context,
-                         scratch._soft_drop_cells, std::move(path)});
+                         scratch._soft_drop_cells, head, move});
       }
     }
   }

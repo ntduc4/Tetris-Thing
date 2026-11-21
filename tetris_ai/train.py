@@ -884,7 +884,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    N_EPISODES = 1000
+    N_EPISODES = 10000
     q_train_button = mo.ui.run_button(label=f"Train Q-learning ({N_EPISODES} episodes)")
     mc_train_button = mo.ui.run_button(label=f"Train Monte carlo ({N_EPISODES} episodes)")
     bc_train_button = mo.ui.run_button(
@@ -925,7 +925,7 @@ def _(
     trained_model, trained_optimizer, completed_episodes = init_training_model(
         training_method
     )
-    episodes_this_run = N_EPISODES // 40 if bc_train_button.value else N_EPISODES
+    episodes_this_run = (N_EPISODES // 40) if bc_train_button.value else N_EPISODES
     episodes_trained = completed_episodes + episodes_this_run
     _versioned = checkpoint_dir / "models" / f"episodes_{episodes_trained:06d}.pt"
     if _versioned.exists():
@@ -959,7 +959,7 @@ def _(
                 gamma=gamma,
                 epsilon=0.1,
             )
-        if bc_train_button.value or ((_episode - completed_episodes + 1) % 20 == 0):
+        if bc_train_button.value or ((_episode - completed_episodes + 1) % 100 == 0):
             print(
                 f"{training_method}: trained "
                 f"{_episode - completed_episodes + 1}/{episodes_this_run} episodes"
@@ -1042,7 +1042,7 @@ def _(mo, replay_data, replay_slider):
         _symbols = ".IOTSZJLGX"
 
         def _replay_board_text(board, overlay=frozenset()):
-            _height, _width = len(board), len(board[0])
+            _height, _width = min(len(board), 20), len(board[0])
             _lines = [f"   +{'-' * _width}+"]
             for _row in range(_height - 1, -1, -1):
                 _cells = "".join(

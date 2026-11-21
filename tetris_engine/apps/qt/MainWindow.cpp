@@ -1,6 +1,8 @@
 #include "MainWindow.hpp"
 #include "RulesDialog.hpp"
 
+#include "bot/MisaMinoBot.hpp"
+
 #include <QAbstractSpinBox>
 #include <QApplication>
 #include <QComboBox>
@@ -8,6 +10,7 @@
 #include <QDialogButtonBox>
 #include <QEvent>
 #include <QFormLayout>
+#include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QKeySequenceEdit>
@@ -19,10 +22,12 @@
 #include <QStringList>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -226,7 +231,7 @@ private:
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
-  setWindowTitle("Tetris — Solo / Local / Model");
+  setWindowTitle("Tetris — Solo / Local / Bots");
   resize(820, 740);
   setFocusPolicy(Qt::StrongFocus);
 
@@ -247,14 +252,20 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
   _model_rules.gravity = 0;
   _model_rules.gravity_increase = 0;
   _model_rules.garbage_delay = 0;
+  _misamino_rules = _model_rules;
+  _misamino_rules.height = 40;
 
   auto *outer = new QVBoxLayout(this);
   auto *menu = new QHBoxLayout;
   _mode = new QComboBox(this);
   _mode->setObjectName("mode");
   _mode->addItems({"Zen (no goal)", "Sprint", "Blitz", "Custom / Marathon",
-                   "Local room (2P)", "Turn-based vs latest model"});
+                   "Local room (2P)", "Turn-based vs bot"});
   menu->addWidget(_mode);
+  _opponent = new QComboBox(this);
+  _opponent->setObjectName("opponent");
+  _opponent->addItems({"Latest AI", "MisaMino bot"});
+  menu->addWidget(_opponent);
   _rules = new QPushButton("Rules…", this);
   _rules->setObjectName("rules");
   menu->addWidget(_rules);
@@ -280,6 +291,10 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
                       "Garbage", "Unclearable"});
   _palette->setCurrentIndex(8);
   editor->addWidget(_palette);
+  _bot_height = new QComboBox(this);
+  _bot_height->setObjectName("botBoardHeight");
+  _bot_height->addItems({"40-row bot board", "10-row bot board"});
+  editor->addWidget(_bot_height);
   editor->addStretch();
   outer->addLayout(editor);
 
@@ -338,6 +353,15 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
     button->setFocusPolicy(Qt::NoFocus);
   connect(_mode, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
           [this] { restart(); });
+  connect(_opponent, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this] {
+            if (is_bot_match()) restart();
+          });
+  connect(_bot_height, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this] {
+            _misamino_rules.height = _bot_height->currentIndex() == 0 ? 40 : 10;
+            if (is_misamino_match()) restart();
+          });
   connect(start, &QPushButton::clicked, this, [this] { restart(); });
   connect(_next, &QPushButton::clicked, this, [this] { next_round(); });
   connect(_rules, &QPushButton::clicked, this, [this] { open_rules(); });
@@ -359,11 +383,21 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
 }
 
 bool MainWindow::is_room() const { return _mode->currentIndex() == 4; }
-bool MainWindow::is_model_match() const { return _mode->currentIndex() == 5; }
-bool MainWindow::is_match() const { return is_room() || is_model_match(); }
-bool MainWindow::can_control_model_match() const {
-  return !is_model_match() || (_model && _model->ready() &&
-                               !_model->busy() && !_model_failed);
+bool MainWindow::is_bot_match() const { return _mode->currentIndex() == 5; }
+bool MainWindow::is_model_match() const {
+  return is_bot_match() && _opponent->currentIndex() == 0;
+}
+bool MainWindow::is_misamino_match() const {
+  return is_bot_match() && _opponent->currentIndex() == 1;
+}
+bool MainWindow::is_match() const { return is_room() || is_bot_match(); }
+bool MainWindow::can_control_bot_match() const {
+  return !is_bot_match() ||
+         (!_opponent_failed && !_bot_thinking &&
+          (is_misamino_match() || (_model && _model->ready() && !_model->busy())));
+}
+const GameConfig &MainWindow::bot_rules() const {
+  return is_misamino_match() ? _misamino_rules : _model_rules;
 }
 
 const Engine *MainWindow::current_engine(size_t player) const {
@@ -383,8 +417,10 @@ void MainWindow::clear_keys() {
 
 void MainWindow::restart() {
   clear_keys();
+  ++_bot_generation; // Invalidate any search still running on a copied engine.
   _model.reset();
-  _model_failed = false;
+  _opponent_failed = false;
+  _bot_thinking = false;
   for (int i = 0; i < 2; ++i) {
     _boards[i]->set_engine(nullptr);
     _holds[i]->set_piece(std::nullopt);
@@ -397,10 +433,10 @@ void MainWindow::restart() {
     std::vector<std::unique_ptr<Engine>> players;
     for (int i = 0; i < 2; ++i)
       players.push_back(std::make_unique<Engine>(
-          make_engine(is_model_match() ? _model_rules : _room_rules)));
+          make_engine(is_bot_match() ? bot_rules() : _room_rules)));
     _match = std::make_unique<Match>(
-        std::move(players), is_model_match() ? _model_rules.wins_to_win
-                                            : _room_rules.wins_to_win);
+        std::move(players), is_bot_match() ? bot_rules().wins_to_win
+                                          : _room_rules.wins_to_win);
     _match->start(seed);
   } else {
     SoloSettings objective;
@@ -415,7 +451,8 @@ void MainWindow::restart() {
     _boards[i]->set_engine(current_engine(i));
     _panels[i]->setVisible(i == 0 || is_match());
   }
-  _titles[1]->setText(is_model_match() ? "LATEST MODEL" : "PLAYER 2");
+  _titles[1]->setText(is_model_match() ? "LATEST MODEL" :
+                      is_misamino_match() ? "MISAMINO BOT" : "PLAYER 2");
   _edit_row = std::min<int>(VisibleHeight, current_engine()->board().get_height()) - 1;
   _edit_col = current_engine()->board().get_width() / 2;
   _message->setText("Ready. Rules and keybinds can be changed from the toolbar.");
@@ -425,10 +462,12 @@ void MainWindow::restart() {
   setFocus();
   if (is_model_match())
     start_model();
+  else if (is_misamino_match())
+    _message->setText("Your turn. MisaMino places a piece after each hard drop.");
 }
 
 void MainWindow::start_model() {
-  _model_failed = false;
+  _opponent_failed = false;
   _message->setText("Loading latest model…");
   _model = std::make_unique<ModelOpponent>(
       [this](int height) {
@@ -454,31 +493,64 @@ void MainWindow::start_model() {
         if (!is_model_match() || !_match || _match->round_over())
           return;
         try {
-          _match->apply_placement(1, placement);
+          if (!_match->apply_placement(1, placement).locked)
+            throw std::runtime_error("Placement did not lock");
           if (!_match->round_over())
             _message->setText("Your turn.");
         } catch (const std::exception &error) {
-          _model_failed = true;
+          _opponent_failed = true;
           _message->setText(QString("Model placement failed: %1. Restart to retry.").arg(error.what()));
         }
         refresh();
       },
       [this](const QString &error) {
-        _model_failed = true;
+        _opponent_failed = true;
         _message->setText(QString("Model unavailable: %1 Restart to retry.").arg(error));
         refresh();
       }, this);
   _model->start();
 }
 
+void MainWindow::start_misamino_turn() {
+  _bot_thinking = true;
+  const uint64_t generation = _bot_generation;
+  auto *watcher = new QFutureWatcher<std::optional<Placement>>(this);
+  connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, generation] {
+    watcher->deleteLater();
+    if (generation != _bot_generation || !is_misamino_match() ||
+        !_match || _match->round_over())
+      return;
+    _bot_thinking = false;
+    try {
+      const auto choice = watcher->result();
+      if (!choice)
+        throw std::runtime_error("No legal placement");
+      if (!_match->apply_placement(1, *choice).locked)
+        throw std::runtime_error("Placement did not lock");
+      if (!_match->round_over())
+        _message->setText("Your turn.");
+    } catch (const std::exception &error) {
+      _opponent_failed = true;
+      _message->setText(QString("MisaMino failed: %1. Restart to retry.").arg(error.what()));
+    }
+    refresh();
+  });
+  watcher->setFuture(QtConcurrent::run([game = _match->player(1).clone()] {
+    return MisaMinoBot{}.choose(game);
+  }));
+}
+
 void MainWindow::next_round() {
   if (!_match || !_match->round_over() || _match->match_winner())
     return;
   clear_keys();
+  ++_bot_generation;
+  _bot_thinking = false;
   _model.reset();
   _round_seed = _seed++;
   _match->start(_round_seed);
-  _message->setText(is_model_match() ? "Loading latest model…" : "Next round.");
+  _message->setText(is_model_match() ? "Loading latest model…" :
+                    is_misamino_match() ? "Next round. Your turn." : "Next round.");
   refresh();
   setFocus();
   if (is_model_match())
@@ -486,7 +558,7 @@ void MainWindow::next_round() {
 }
 
 void MainWindow::open_rules() {
-  if (is_model_match())
+  if (is_bot_match())
     return;
   _timer->stop();
   clear_keys();
@@ -545,7 +617,7 @@ void MainWindow::paint(int row, int col, bool erase) {
 }
 
 void MainWindow::action(size_t player, Input input) {
-  if ((is_model_match() && player != 0) || !can_control_model_match())
+  if ((is_bot_match() && player != 0) || !can_control_bot_match())
     return;
   Engine *game = current_engine(player);
   if (!game || game->game_over() || game->edit_mode() ||
@@ -555,7 +627,7 @@ void MainWindow::action(size_t player, Input input) {
   case Input::Left: game->try_move_left(); break;
   case Input::Right: game->try_move_right(); break;
   case Input::Down:
-    game->try_soft_drop((is_model_match() ? _model_rules :
+    game->try_soft_drop((is_bot_match() ? bot_rules() :
                          is_room() ? _room_rules : _solo_rules).soft_drop);
     break;
   case Input::CW: game->try_rotate_cw(); break;
@@ -565,10 +637,14 @@ void MainWindow::action(size_t player, Input input) {
   case Input::Drop:
     if (_match) {
       const LockResult lock = _match->hard_drop(player);
-      if (is_model_match() && lock.locked && !_match->round_over()) {
+      if (is_bot_match() && lock.locked && !_match->round_over()) {
         clear_keys();
-        _message->setText("Model thinking…");
-        _model->choose(_match->player(1));
+        _message->setText(is_model_match() ? "Model thinking…" :
+                          "MisaMino thinking…");
+        if (is_model_match())
+          _model->choose(_match->player(1));
+        else
+          start_misamino_turn();
       }
     } else {
       _solo->hard_drop();
@@ -681,9 +757,9 @@ void MainWindow::frame() {
       if (!_solo->engine().edit_mode()) repeat(0, _solo_rules);
       _solo->tick();
     }
-    if (is_model_match() && _match && !_match->round_over() &&
-        can_control_model_match()) {
-      repeat(0, _model_rules);
+    if (is_bot_match() && _match && !_match->round_over() &&
+        can_control_bot_match()) {
+      repeat(0, bot_rules());
     }
     if (is_room() && _match && !_match->round_over()) {
       repeat(0, _room_rules);
@@ -698,7 +774,7 @@ void MainWindow::frame() {
 void MainWindow::refresh() {
   _boards[0]->set_editable(_solo && _solo->engine().edit_mode());
   _boards[0]->set_cursor(_edit_row, _edit_col);
-  const auto &rules = is_model_match() ? _model_rules :
+  const auto &rules = is_bot_match() ? bot_rules() :
                       is_room() ? _room_rules : _solo_rules;
   for (int i = 0; i < 2; ++i) {
     const Engine *game = current_engine(i);
@@ -730,8 +806,10 @@ void MainWindow::refresh() {
   }
   _edit->setVisible(!is_match());
   _palette->setVisible(!is_match());
-  _rules->setEnabled(!is_model_match());
-  _rules->setToolTip(is_model_match() ? "Model mode uses fixed 10x10 training rules." : "");
+  _opponent->setVisible(is_bot_match());
+  _bot_height->setVisible(is_misamino_match());
+  _rules->setEnabled(!is_bot_match());
+  _rules->setToolTip(is_bot_match() ? "Bot matches use fixed training-style rules." : "");
   _edit->setText(_solo && _solo->engine().edit_mode() ? "Resume (F)" : "Draw mode (F)");
   _next->setVisible(is_match());
   _next->setEnabled(_match && _match->round_over() && !_match->match_winner());
@@ -740,8 +818,9 @@ void MainWindow::refresh() {
                                           : "Game over. Restart to play again.");
   if (_match && _match->round_over()) {
     QString message = _match->round_winner()
-        ? is_model_match()
-            ? (*_match->round_winner() == 0 ? "You win!" : "Model wins.")
+        ? is_bot_match()
+            ? (*_match->round_winner() == 0 ? "You win!" :
+               is_model_match() ? "Model wins." : "MisaMino wins.")
             : QString("Player %1 wins the round.").arg(*_match->round_winner() + 1)
         : QString("Round draw.");
     if (_match->match_winner()) message += " Match won! Press Restart for a new match.";

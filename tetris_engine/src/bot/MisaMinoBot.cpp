@@ -17,32 +17,46 @@ namespace tetris {
 namespace {
 
 // These are deliberately engine-specific weights, not the original bot's
-// tuned TOJ/22-row parameter table. Preserve the *strategy*: evaluate the
-// resulting stack, attack efficiency, hold, B2B, and actual spins across a
-// bounded, deduplicated beam of visible future placements.
+// tuned TOJ/22-row parameter table. Preserve the *strategy*: distinguish
+// buried from side-accessible holes and their depth, evaluate the resulting
+// stack, attack efficiency, hold, B2B and actual spins across a bounded beam.
 double stack_value(const Board &board, std::optional<PieceType> hold, bool b2b,
                    uint32_t combo, int attack, int lines, double spin_value,
                    int pending, bool terminal, int t_distance) {
   const int width = board.get_width();
   const int height = board.get_height();
   std::vector<int> heights(width);
-  int holes = 0;
-  int open_holes = 0;
+  double hole_cost = 0;
   int transitions = 0;
   int aggregate = 0;
+  const int visible_height = std::min<int>(height, VisibleHeight);
   for (int col = 0; col < width; ++col) {
     heights[col] = board.column_height(col);
     aggregate += heights[col];
+  }
+  for (int col = 0; col < width; ++col) {
+    bool previous_hole = false;
     for (int row = 0; row < heights[col]; ++row) {
-      if (board.get(row, col) != Cell::Empty)
+      if (board.get(row, col) != Cell::Empty) {
+        previous_hole = false;
         continue;
-      // Open-sided holes are less costly in a soft-drop/slide-under game.
-      const bool open_left = col > 0 && heights[col - 1] <= row + 1;
-      const bool open_right = col + 1 < width && heights[col + 1] <= row + 1;
-      if (open_left || open_right)
-        ++open_holes;
-      else
-        ++holes;
+      }
+      // A side approach requires more than a single shallow neighbor;
+      // consecutive buried gaps are one cavity, not independent openings.
+      const bool open_left = col > 1 && heights[col - 1] <= row + 1 &&
+                             heights[col - 2] <= row + 1;
+      const bool open_right = col + 2 < width &&
+                              heights[col + 1] <= row + 1 &&
+                              heights[col + 2] <= row + 1;
+      const double depth_factor =
+          1.0 + 2.0 * std::max(0, visible_height - row) / visible_height;
+      if (open_left || open_right) {
+        hole_cost += 14.0 * depth_factor;
+        previous_hole = false;
+      } else {
+        hole_cost += (previous_hole ? 9.0 : 36.0) * depth_factor;
+        previous_hole = true;
+      }
     }
   }
   int bumpiness = 0;
@@ -61,7 +75,7 @@ double stack_value(const Board &board, std::optional<PieceType> hold, bool b2b,
   const int max_height = board.max_height();
   const int danger = std::max(0, max_height - height + 4);
   double value =
-      -36.0 * holes - 14.0 * open_holes - 1.7 * transitions - 2.2 * bumpiness -
+      -hole_cost - 1.7 * transitions - 2.2 * bumpiness -
       0.8 * aggregate - 3.0 * max_height * max_height / height -
       35.0 * danger * danger + 27.0 * attack + 7.0 * lines + spin_value +
       (b2b ? 8.0 : 0.0) + 3.0 * std::min(combo, 8u) - 12.0 * pending;
@@ -271,25 +285,39 @@ std::optional<Placement> choose_with_cache(const Engine &engine,
                     std::min<size_t>(config.search_depth, known_placements));
 
   for (int depth = 0; depth < depth_limit; ++depth) {
+    const bool last_layer = depth + 1 == depth_limit;
     std::vector<Candidate> pool;
     bool complete = true;
+    bool has_best = false;
+    double layer_best_score = 0;
+    size_t layer_best_first = 0;
+    auto consider = [&](double score, size_t first) {
+      if (!has_best || score > layer_best_score) {
+        layer_best_score = score;
+        layer_best_first = first;
+        has_best = true;
+      }
+    };
     for (size_t parent_index = 0; parent_index < frontier.size();
          ++parent_index) {
       const auto &parent = frontier[parent_index];
       if (parent.terminal || !parent.game.active_piece()) {
         if (depth) {
-          pool.push_back(
-              {.action = std::nullopt,
-               .parent = parent_index,
-               .used = parent.used,
-               .first = parent.first,
-               .attack = parent.attack,
-               .lines = parent.lines,
-               .spins = parent.spins,
-               .score = parent.score,
-               .terminal = parent.terminal,
-               .key = state_key(parent.game, parent.used, parent.attack,
-                                parent.lines, parent.spins)});
+          if (last_layer)
+            consider(parent.score, parent.first);
+          else
+            pool.push_back(
+                {.action = std::nullopt,
+                 .parent = parent_index,
+                 .used = parent.used,
+                 .first = parent.first,
+                 .attack = parent.attack,
+                 .lines = parent.lines,
+                 .spins = parent.spins,
+                 .score = parent.score,
+                 .terminal = parent.terminal,
+                 .key = state_key(parent.game, parent.used, parent.attack,
+                                  parent.lines, parent.spins)});
         }
         continue;
       }
@@ -311,14 +339,16 @@ std::optional<Placement> choose_with_cache(const Engine &engine,
         // If incoming garbage was ready, work.board() may now contain its
         // secret hole. Reconstruct the pre-rise board from public landing
         // cells.
-        Board board = pending ? parent.game.board() : work.board();
+        std::optional<Board> pre_rise_board;
         if (pending) {
+          pre_rise_board = parent.game.board();
           const auto piece_cell = get_from_piece_type(action.type).cell_type();
           for (Position cell : action.cells())
-            board.set(cell.row, cell.col, piece_cell);
-          if (board.clear_lines() != lock.lines_cleared)
+            pre_rise_board->set(cell.row, cell.col, piece_cell);
+          if (pre_rise_board->clear_lines() != lock.lines_cleared)
             throw std::logic_error("pre-rise board disagrees with engine lock");
         }
+        const Board &board = pending ? *pre_rise_board : work.board();
 
         bool terminal = !pending && work.game_over();
         if (!pending && !terminal && used < visible.size()) {
@@ -337,18 +367,20 @@ std::optional<Placement> choose_with_cache(const Engine &engine,
             stack_value(board, work.hold_piece(), work.back_to_back(),
                         work.combo(), attack, lines, spins, incoming, terminal,
                         distance_to_t(work.hold_piece(), visible, used));
-        pool.push_back(
-            {.action = action,
-             .parent = parent_index,
-             .used = used,
-             .first = depth ? parent.first : index,
-             .attack = attack,
-             .lines = lines,
-             .spins = spins,
-             .score = score,
-             .terminal = terminal,
-             .key = pending ? std::string{}
-                            : state_key(work, used, attack, lines, spins)});
+        if (last_layer)
+          consider(score, depth ? parent.first : index);
+        else
+          pool.push_back(
+              {.action = action,
+               .parent = parent_index,
+               .used = used,
+               .first = depth ? parent.first : index,
+               .attack = attack,
+               .lines = lines,
+               .spins = spins,
+               .score = score,
+               .terminal = terminal,
+               .key = state_key(work, used, attack, lines, spins)});
         ++expanded;
       }
       if (!complete)
@@ -356,16 +388,17 @@ std::optional<Placement> choose_with_cache(const Engine &engine,
     }
     // Do not choose from a partially expanded layer: it would favor the first
     // beam parent solely because the budget ran out.
-    if (!complete || pool.empty())
+    if (!complete || (last_layer ? !has_best : pool.empty()))
       break;
+    if (last_layer) {
+      best_first = layer_best_first;
+      break;
+    }
     std::stable_sort(pool.begin(), pool.end(),
                      [](const Candidate &a, const Candidate &b) {
                        return a.score > b.score;
                      });
     best_first = pool.front().first;
-    if (depth + 1 == depth_limit)
-      break;
-
     std::unordered_set<std::string> seen;
     std::vector<Node> next;
     next.reserve(std::min(config.beam_width, pool.size()));

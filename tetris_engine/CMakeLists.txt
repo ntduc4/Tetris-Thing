@@ -36,8 +36,8 @@ target_link_libraries(tetris_cli
 
 option(TETRIS_BUILD_QT "Build the local-play Qt Widgets app when Qt 6 is available" ON)
 if(TETRIS_BUILD_QT)
-    find_package(Qt6 QUIET COMPONENTS Widgets)
-    if(Qt6Widgets_FOUND)
+    find_package(Qt6 QUIET COMPONENTS Widgets Concurrent)
+    if(Qt6Widgets_FOUND AND Qt6Concurrent_FOUND)
         add_library(tetris_qt_widgets STATIC
             apps/qt/BoardWidget.cpp
             apps/qt/GameConfig.cpp
@@ -50,12 +50,12 @@ if(TETRIS_BUILD_QT)
         target_compile_definitions(tetris_qt_widgets PRIVATE
             TETRIS_AI_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tetris_ai")
         target_include_directories(tetris_qt_widgets PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/apps/qt)
-        target_link_libraries(tetris_qt_widgets PUBLIC tetris_engine Qt6::Widgets)
+        target_link_libraries(tetris_qt_widgets PUBLIC tetris_bot Qt6::Widgets Qt6::Concurrent)
 
         add_executable(tetris_qt apps/qt/main.cpp)
         target_link_libraries(tetris_qt PRIVATE tetris_qt_widgets)
     else()
-        message(STATUS "Qt 6 Widgets not found: skipping tetris_qt")
+        message(STATUS "Qt 6 Widgets/Concurrent not found: skipping tetris_qt")
     endif()
 endif()
 

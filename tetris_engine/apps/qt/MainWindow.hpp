@@ -42,10 +42,14 @@ private:
   };
 
   bool is_room() const;
+  bool is_bot_match() const;
   bool is_model_match() const;
+  bool is_misamino_match() const;
   bool is_match() const;
-  bool can_control_model_match() const;
+  bool can_control_bot_match() const;
+  const GameConfig &bot_rules() const;
   void start_model();
+  void start_misamino_turn();
   void restart();
   void next_round();
   void open_rules();
@@ -59,7 +63,7 @@ private:
   void refresh();
   void clear_keys();
 
-  GameConfig _solo_rules, _room_rules, _model_rules;
+  GameConfig _solo_rules, _room_rules, _model_rules, _misamino_rules;
   Bindings _bindings[2];
   HeldKeys _held[2];
   uint64_t _seed = 1;
@@ -67,8 +71,10 @@ private:
   std::unique_ptr<SoloSession> _solo;
   std::unique_ptr<Match> _match;
   std::unique_ptr<ModelOpponent> _model;
-  bool _model_failed = false;
-  QComboBox *_mode, *_palette;
+  bool _opponent_failed = false;
+  bool _bot_thinking = false;
+  uint64_t _bot_generation = 0;
+  QComboBox *_mode, *_opponent, *_bot_height, *_palette;
   QPushButton *_edit, *_next, *_rules;
   QLabel *_status[2], *_streaks[2], *_message;
   QLabel *_titles[2];

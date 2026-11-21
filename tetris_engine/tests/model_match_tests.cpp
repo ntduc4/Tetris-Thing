@@ -1,14 +1,17 @@
 #include "MainWindow.hpp"
+#include "bot/MisaMinoBot.hpp"
 
 #include <QApplication>
 #include <QComboBox>
 #include <QFile>
+#include <QFutureWatcher>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
 #include <QPushButton>
 #include <QSettings>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -47,10 +50,15 @@ int main(int argc, char **argv) {
   window.activateWindow();
   window.setFocus();
   auto *mode = window.findChild<QComboBox *>("mode");
+  auto *opponent = window.findChild<QComboBox *>("opponent");
+  auto *bot_height = window.findChild<QComboBox *>("botBoardHeight");
   auto *message = window.findChild<QLabel *>("message");
   auto *rules = window.findChild<QPushButton *>("rules");
   auto *next = window.findChild<QPushButton *>("nextRound");
   mode->setCurrentIndex(5);
+  check(opponent && bot_height && opponent->isVisible() &&
+            opponent->currentText() == "Latest AI" && !bot_height->isVisible(),
+        "turn-based mode should offer the latest model and MisaMino");
   check(QTest::qWaitFor([&] { return message->text().contains("Model ready"); }, 5000),
         "the fake model should become ready");
   check(window.current_engine(0) && window.current_engine(1) &&
@@ -126,6 +134,53 @@ int main(int argc, char **argv) {
   QTest::keyClick(&window, Qt::Key_Space);
   check(window.current_engine(0)->active_piece() == frozen,
         "no human moves should proceed without an available opponent");
+
+  opponent->setCurrentIndex(1);
+  check(message->text().contains("MisaMino") &&
+            window.current_engine(0)->board().get_height() == 40 &&
+            window.current_engine(1)->board().get_height() == 40 &&
+            bot_height->isVisible() && bot_height->currentIndex() == 0,
+        "MisaMino should start without Python or a checkpoint on a 40-row board");
+  check(window.current_engine(0)->preview_queue() ==
+            window.current_engine(1)->preview_queue(),
+        "MisaMino and the human must start with the same piece sequence");
+  auto *teacher = window.current_engine(1);
+  QTest::keyClick(&window, Qt::Key_Space);
+  check(message->text().contains("MisaMino thinking") &&
+            teacher->board().max_height() == 0,
+        "MisaMino must wait for the human's lock before choosing");
+  const auto expected_choice = MisaMinoBot{}.choose(*teacher);
+  check(expected_choice.has_value(), "MisaMino should choose a legal placement");
+  Engine expected_teacher = teacher->clone();
+  check(expected_teacher.apply_placement(*expected_choice).locked,
+        "MisaMino's chosen placement must be replayable");
+  if (!expected_teacher.game_over())
+    expected_teacher.spawn_next_piece();
+  const auto waiting_human = window.current_engine(0)->active_piece();
+  QTest::keyClick(&window, Qt::Key_D);
+  QTest::keyClick(&window, Qt::Key_Space);
+  check(window.current_engine(0)->active_piece() == waiting_human,
+        "the human must be paused while MisaMino searches");
+  check(QTest::qWaitFor([&] { return teacher->board().max_height() > 0; }, 20000) &&
+            teacher->board().render() == expected_teacher.board().render() &&
+            teacher->preview_queue() == expected_teacher.preview_queue() &&
+            teacher->hold_piece() == expected_teacher.hold_piece(),
+        "the Qt opponent must use MisaMino's actual chosen placement");
+  bot_height->setCurrentIndex(1);
+  check(window.current_engine(0)->board().get_height() == 10 &&
+            window.current_engine(1)->board().get_height() == 10,
+        "MisaMino should also offer the model's 10-row board for comparison");
+  QTest::keyClick(&window, Qt::Key_Space);
+  check(message->text().contains("MisaMino thinking"),
+        "the 10-row MisaMino board should also start a search");
+  auto *search = window.findChild<QFutureWatcherBase *>();
+  check(search != nullptr, "MisaMino search should run outside the UI thread");
+  QSignalSpy search_finished(search, &QFutureWatcherBase::finished);
+  opponent->setCurrentIndex(0);
+  check(QTest::qWaitFor([&] { return !search_finished.isEmpty(); }, 20000) &&
+            message->text().contains("Model unavailable") &&
+            window.current_engine(1)->board().max_height() == 0,
+        "switching to the latest AI must ignore an in-flight MisaMino result");
 
   qputenv("TETRIS_MODEL_CHECKPOINT", checkpoint.toLocal8Bit());
   qputenv("TETRIS_MODEL_STUB_INDEX", "99999");

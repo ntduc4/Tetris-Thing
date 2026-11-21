@@ -2,6 +2,7 @@
 .PHONY: help configure build test python test-python ai-setup ai-check ai cli run-cli qt run-qt clean
 
 BUILD_DIR := build
+BUILD_TYPE ?= Release
 PYTHON ?= python3
 
 help:
@@ -17,7 +18,7 @@ help:
 		'make clean        Remove the build directory'
 
 configure:
-	cmake -S . -B $(BUILD_DIR)
+	cmake -S . -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
 
 build: configure
 	cmake --build $(BUILD_DIR)
@@ -26,7 +27,7 @@ test: build
 	ctest --test-dir $(BUILD_DIR) --output-on-failure
 
 python:
-	cmake -S . -B $(BUILD_DIR) -DTETRIS_BUILD_PYTHON=ON -DPython3_EXECUTABLE="$(shell $(PYTHON) -c 'import sys; print(sys.executable)')"
+	cmake -S . -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DTETRIS_BUILD_PYTHON=ON -DPython3_EXECUTABLE="$(shell $(PYTHON) -c 'import sys; print(sys.executable)')"
 	cmake --build $(BUILD_DIR) --target tetris_py
 
 test-python: python
@@ -50,7 +51,7 @@ run-cli: cli
 	./$(BUILD_DIR)/tetris_cli
 
 qt:
-	cmake -S . -B $(BUILD_DIR) -DTETRIS_BUILD_QT=ON
+	cmake -S . -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DTETRIS_BUILD_QT=ON
 	cmake --build $(BUILD_DIR) --target tetris_qt
 
 run-qt: qt
