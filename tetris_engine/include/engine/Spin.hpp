@@ -11,9 +11,6 @@
 
 namespace tetris {
 
-/** Describes the spin classification produced by a lock. */
-enum class SpinType { None, Mini, Full };
-
 /** Interface for classifying spin moves at lock time. */
 class SpinSystem {
 public:

@@ -21,9 +21,10 @@ target_include_directories(tetris_engine
 
 # Bot code is separate from the game runtime. Link this target only for
 # consumers that need an engine-aware search teacher.
+find_package(Threads REQUIRED)
 add_library(tetris_bot src/bot/MisaMinoBot.cpp)
 target_compile_features(tetris_bot PUBLIC cxx_std_20)
-target_link_libraries(tetris_bot PUBLIC tetris_engine)
+target_link_libraries(tetris_bot PUBLIC tetris_engine Threads::Threads)
 
 add_executable(tetris_cli
     apps/cli.cpp

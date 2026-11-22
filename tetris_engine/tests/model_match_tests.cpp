@@ -107,12 +107,15 @@ int main(int argc, char **argv) {
   QFile log(log_path);
   check(log.open(QIODevice::ReadOnly), "the fake worker must receive a request");
   auto request = QJsonDocument::fromJson(log.readLine()).object();
+  const auto serialized_action = request.value("actions").toArray().first().toObject();
   check(request.keys().size() == 9 &&
             request.value("board").toArray().size() == 10 &&
             request.value("preview").toArray().size() == 5 &&
             request.value("actions").toArray().size() > 0 &&
+            serialized_action.value("spin").toInt(-1) ==
+                static_cast<int>(actions.front().spin) &&
             !request.contains("seed") && !request.contains("randomizer"),
-        "worker input must be limited to public state and reachable placements");
+        "worker input must include the public spin classification, not hidden state");
   QTest::keyClick(&window, Qt::Key_D);
   check(human->active_piece()->pos.col == before_wait->pos.col + 1,
         "human controls should resume after the bot's placement");

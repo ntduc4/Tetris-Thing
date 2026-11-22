@@ -19,6 +19,8 @@ public:
   void set_cursor(int row, int col);
   void set_paint_handler(std::function<void(int, int, bool)> handler);
   QSize sizeHint() const override;
+  QRect grid_rect() const;
+  QRect garbage_meter_rect() const;
 
 protected:
   void paintEvent(QPaintEvent *event) override;
@@ -27,7 +29,6 @@ protected:
 
 private:
   void paint_at(const QPoint &point, bool erase);
-  QRect grid_rect() const;
   const Engine *_engine = nullptr;
   bool _editable = false;
   int _cursor_row = 0, _cursor_col = 0;

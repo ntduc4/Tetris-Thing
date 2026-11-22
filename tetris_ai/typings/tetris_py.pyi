@@ -721,7 +721,7 @@ class SpinContext:
         ...
 class Placement:
     """
-    Engine-generated placement with its final pose and recorded movement path.
+    Engine-generated placement with its final pose, movement path, and spin.
     """
     def cells(self) -> list[Position]:
         """
@@ -741,6 +741,9 @@ class Placement:
         ...
     @property
     def spin_context(self) -> SpinContext:
+        ...
+    @property
+    def spin(self) -> SpinType:
         ...
     @property
     def type(self) -> PieceType:

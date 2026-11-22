@@ -13,6 +13,7 @@
 #include <optional>
 #include <stdexcept>
 #include <tuple>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -520,8 +521,15 @@ std::optional<ActivePiece> Engine::ghost_piece() const {
   if (!res.has_value() || _board.collide(res.value()))
     return std::nullopt;
 
-  while (res->pos.row > -PieceDimension && !_board.grounded(res.value()))
-    res->pos.row--;
+  // The current pose is known to be valid. Test only the next row; grounded()
+  // would recheck the current pose at every step of this drop search.
+  while (res->pos.row > -PieceDimension) {
+    ActivePiece down = *res;
+    --down.pos.row;
+    if (_board.collide(down))
+      break;
+    *res = down;
+  }
 
   return res;
 }
@@ -541,19 +549,8 @@ std::vector<std::vector<Cell>> Engine::render() const {
 }
 
 uint16_t Engine::hard_drop_distance() const {
-  if (!_active_piece.has_value())
-    return 0;
-
-  ActivePiece p = _active_piece.value();
-
-  if (_board.collide(p))
-    return 0;
-  uint16_t res = 0;
-  for (; !_board.grounded(p) && res <= _board.get_height() + PieceDimension;
-       res++)
-    p.pos.row--;
-
-  return res;
+  const auto ghost = ghost_piece();
+  return ghost ? static_cast<uint16_t>(_active_piece->pos.row - ghost->pos.row) : 0;
 }
 
 TickResult Engine::tick() {
@@ -614,16 +611,18 @@ TickResult Engine::tick() {
 }
 
 LockResult Engine::hard_drop() {
-  if (_game_over || _edit_mode || !_active_piece || _board.collide(*_active_piece))
+  if (_game_over || _edit_mode || !_active_piece)
     return {};
-  ActivePiece p = *_active_piece;
-  uint16_t distance = 0;
-  while (!_board.grounded(p)) {
-    --p.pos.row;
-    ++distance;
-  }
+  const auto landing = ghost_piece();
+  if (!landing)
+    return {};
+  return lock_hard_drop_landing(*landing);
+}
+
+LockResult Engine::lock_hard_drop_landing(const ActivePiece &landing) {
+  const uint16_t distance = _active_piece->pos.row - landing.pos.row;
   if (distance > 0) {
-    _active_piece = p;
+    _active_piece = landing;
     _spin_context.last_movement = Movement::HardDrop;
     _spin_context.kick_offset.reset();
   }
@@ -784,6 +783,8 @@ std::vector<Placement> Engine::search_placements(bool use_hold) const {
   std::vector<Node> queue;
   std::unordered_set<SearchKey, TupleHash<SearchKey>> visited;
   std::unordered_set<PlacementKey, TupleHash<PlacementKey>> endpoints;
+  using GhostKey = std::tuple<int, int, int>;
+  std::unordered_map<GhostKey, ActivePiece, TupleHash<GhostKey>> landings;
   queue.push_back({*scratch._active_piece, scratch._spin_context,
                    scratch._soft_drop_cells, root, Movement::HardDrop});
   visited.insert(search_key(queue.front().piece, queue.front().spin));
@@ -796,22 +797,28 @@ std::vector<Placement> Engine::search_placements(bool use_hold) const {
   // reachable movement state. Reconstruct only distinct locking paths.
   for (size_t head = 0; head < queue.size(); ++head) {
     const Node node = queue[head];
-    scratch._active_piece = node.piece;
-    scratch._spin_context = node.spin;
-    auto ghost = scratch.ghost_piece();
-    if (!ghost)
-      throw std::logic_error("reachable piece has no valid hard drop");
-    const uint16_t distance = node.piece.pos.row - ghost->pos.row;
+    const GhostKey key{node.piece.pos.row, node.piece.pos.col,
+                       static_cast<int>(node.piece.piece.rotation())};
+    auto landing = landings.find(key);
+    if (landing == landings.end()) {
+      scratch._active_piece = node.piece;
+      auto ghost = scratch.ghost_piece();
+      if (!ghost)
+        throw std::logic_error("reachable piece has no valid hard drop");
+      landing = landings.emplace(key, *ghost).first;
+    }
+    const auto &ghost = landing->second;
+    const uint16_t distance = node.piece.pos.row - ghost.pos.row;
     SpinContext at_lock = distance ? SpinContext{Movement::HardDrop, std::nullopt}
                                    : node.spin;
     SpinType effective_spin =
         scratch._spin_system
-            ? scratch._spin_system->detect(scratch._board, *ghost, at_lock)
+            ? scratch._spin_system->detect(scratch._board, ghost, at_lock)
             : SpinType::None;
     // Different kick/rotation paths may produce the same lock result. Keep
     // one per actual spin outcome, but never merge a mini with a non-spin.
-    if (endpoints.insert({ghost->pos.row, ghost->pos.col,
-                          static_cast<int>(ghost->piece.rotation()),
+    if (endpoints.insert({ghost.pos.row, ghost.pos.col,
+                          static_cast<int>(ghost.piece.rotation()),
                           effective_spin}).second) {
       std::vector<Movement> path;
       for (size_t at = head; queue[at].parent != root; at = queue[at].parent)
@@ -819,12 +826,13 @@ std::vector<Placement> Engine::search_placements(bool use_hold) const {
       std::reverse(path.begin(), path.end());
       path.push_back(Movement::HardDrop);
       placements.push_back({.moves = std::move(path),
-                            .type = ghost->piece.type(),
-                            .final_pos = ghost->pos,
-                            .final_rotation = ghost->piece.rotation(),
+                            .type = ghost.piece.type(),
+                            .final_pos = ghost.pos,
+                            .final_rotation = ghost.piece.rotation(),
                             .use_hold = use_hold,
                             .drop_distance = distance,
-                            .spin_context = node.spin});
+                            .spin_context = node.spin,
+                            .spin = effective_spin});
     }
 
     for (Movement move : moves) {
@@ -883,6 +891,7 @@ LockResult Engine::apply_placement(const Placement &placement) {
     if (random_before)
       _randomizer->restore_from(*random_before);
   };
+  std::optional<ActivePiece> ghost;
   try {
     if (placement.use_hold && !hold())
       throw std::invalid_argument("hold is unavailable");
@@ -895,10 +904,10 @@ LockResult Engine::apply_placement(const Placement &placement) {
       if (!execute_move(*this, placement.moves[i]))
         throw std::invalid_argument("placement has an illegal movement");
 
-    auto ghost = ghost_piece();
+    ghost = ghost_piece();
     if (!ghost || ghost->pos != placement.final_pos ||
         ghost->piece.rotation() != placement.final_rotation ||
-        hard_drop_distance() != placement.drop_distance)
+        _active_piece->pos.row - ghost->pos.row != placement.drop_distance)
       throw std::invalid_argument("placement final position does not match path");
     if (_spin_context != placement.spin_context)
       throw std::invalid_argument("placement pre-drop context does not match path");
@@ -907,7 +916,9 @@ LockResult Engine::apply_placement(const Placement &placement) {
     throw;
   }
 
-  LockResult result = hard_drop();
+  // The replayed path and final ghost were just verified above. Searching
+  // again inside hard_drop() would trace the same landing a second time.
+  LockResult result = lock_hard_drop_landing(*ghost);
   if (!result.locked)
     throw std::logic_error("valid placement failed to lock");
   return result;

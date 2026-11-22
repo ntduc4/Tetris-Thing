@@ -24,7 +24,7 @@ bool same_action(const Placement &a, const Placement &b) {
          a.final_pos == b.final_pos &&
          a.final_rotation == b.final_rotation && a.use_hold == b.use_hold &&
          a.drop_distance == b.drop_distance &&
-         a.spin_context == b.spin_context;
+         a.spin_context == b.spin_context && a.spin == b.spin;
 }
 
 void test_legal_replayable_and_no_live_mutation() {
@@ -107,6 +107,47 @@ void test_full_episode_matches_fresh_search() {
   }
 }
 
+void test_parallel_search_matches_serial() {
+  MisaMinoBot serial({.search_depth = 3, .beam_width = 12,
+                      .node_budget = 4000, .search_threads = 1});
+  MisaMinoBot parallel({.search_depth = 3, .beam_width = 12,
+                        .node_budget = 4000, .search_threads = 4});
+  for (uint16_t height : {10, 40}) {
+    for (uint64_t seed : {3u, 31u, 42u, 93u}) {
+      auto game = make_game(height);
+      game.reset(seed);
+      require(game.spawn_next_piece(), "parallel fixture must spawn");
+      for (int turn = 0; turn < 4 && !game.game_over(); ++turn) {
+        const auto a = serial.choose(game);
+        const auto b = parallel.choose(game);
+        require(a && b && same_action(*a, *b),
+                "parallel search must keep the serial beam decision and path");
+        auto legal = game.generate_active_piece_placement();
+        if (game.can_hold()) {
+          auto held = game.generate_hold_piece_placement();
+          legal.insert(legal.end(), held.begin(), held.end());
+        }
+        const auto &executed = turn % 2 ? legal[legal.size() / 2] : *a;
+        require(game.apply_placement(executed).locked,
+                "teacher and learner-visited choices must lock");
+        if (!game.game_over())
+          game.spawn_next_piece();
+      }
+    }
+  }
+  auto game = make_game(40);
+  game.reset(7);
+  require(game.spawn_next_piece(), "budget fixture must spawn");
+  MisaMinoBot limited_serial({.search_depth = 3, .beam_width = 12,
+                              .node_budget = 100, .search_threads = 1});
+  MisaMinoBot limited_parallel({.search_depth = 3, .beam_width = 12,
+                                .node_budget = 100, .search_threads = 4});
+  const auto a = limited_serial.choose(game);
+  const auto b = limited_parallel.choose(game);
+  require(a && b && same_action(*a, *b),
+          "parallel search must discard the same incomplete layer");
+}
+
 void test_hold_gate_and_no_active_piece() {
   auto game = make_game();
   MisaMinoBot bot({.search_depth = 2, .beam_width = 3, .node_budget = 800});
@@ -122,8 +163,9 @@ void test_hold_gate_and_no_active_piece() {
   require(next && game.apply_placement(*next).locked,
           "bot must also work with a populated hold slot");
   for (const auto bad : {MisaMinoConfig{0, 4, 500},
-                         MisaMinoConfig{1, 0, 500},
-                         MisaMinoConfig{1, 4, 0}}) {
+                          MisaMinoConfig{1, 0, 500},
+                          MisaMinoConfig{1, 4, 0},
+                          MisaMinoConfig{1, 4, 500, 0}}) {
     try {
       MisaMinoBot invalid(bad);
       require(false, "zero search limit must be rejected");
@@ -319,6 +361,7 @@ void test_hold_t_spin_setup() {
 int main() {
   test_legal_replayable_and_no_live_mutation();
   test_full_episode_matches_fresh_search();
+  test_parallel_search_matches_serial();
   test_hold_gate_and_no_active_piece();
   test_preview_boundary_and_hidden_garbage_holes();
   test_spin_and_nonspin_same_board();

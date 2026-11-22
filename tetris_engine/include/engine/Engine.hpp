@@ -288,6 +288,8 @@ private:
   void on_player_move(bool was_grounded);
   /** Applies up to 8 ready lines in packet order after a non-clearing lock. */
   void apply_ready_garbage();
+  /** Commit an already-validated hard-drop landing without searching again. */
+  LockResult lock_hard_drop_landing(const ActivePiece &landing);
   std::vector<Placement> search_placements(bool use_hold) const;
 
   std::unique_ptr<RotationSystem> _rotation_system;

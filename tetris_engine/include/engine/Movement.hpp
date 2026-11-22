@@ -27,7 +27,10 @@ struct SpinContext {
   bool operator==(const SpinContext &) const = default;
 };
 
-/** One reachable, replayable hard-drop action. Outcome values belong to LockResult. */
+/** Spin classification of a placement or completed lock. */
+enum class SpinType { None, Mini, Full };
+
+/** One reachable, replayable hard-drop action. Lock results belong to LockResult. */
 struct Placement {
   /** Replayable commands ending in exactly one locking HardDrop; hold is separate. */
   std::vector<Movement> moves;
@@ -39,6 +42,8 @@ struct Placement {
   uint16_t drop_distance = 0;
   /** Last move and kick before HardDrop; a moving drop cancels spin at lock. */
   SpinContext spin_context;
+  /** Spin classified for this candidate at generation time; a live lock is authoritative. */
+  SpinType spin = SpinType::None;
 
   /** The four board-space cells occupied just before line clearing. */
   std::vector<Position> cells() const {

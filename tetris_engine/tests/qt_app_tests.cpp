@@ -110,11 +110,10 @@ int main(int argc, char **argv) {
   draw->click();
   check(solo->edit_mode(), "solo draw mode should open");
   palette->setCurrentIndex(8);
-  int size = std::min((board->width() - 16) / solo->board().get_width(),
-                      (board->height() - 16) / std::min<int>(VisibleHeight, solo->board().get_height()));
-  QPoint target((board->width() - size * solo->board().get_width()) / 2 + size / 2,
-                (board->height() - size * VisibleHeight) / 2 +
-                    (VisibleHeight - 1) * size + size / 2);
+  const QRect grid = board->grid_rect();
+  const int size = grid.width() / solo->board().get_width();
+  QPoint target(grid.left() + size / 2,
+                grid.top() + (VisibleHeight - 1) * size + size / 2);
   QTest::mouseClick(board, Qt::LeftButton, {}, target);
   check(solo->board().get(0, 0) == Cell::Garbage,
         "mouse draw should paint garbage in the chosen cell");
@@ -486,9 +485,22 @@ int main(int argc, char **argv) {
   tank_window.findChild<QComboBox *>("mode")->setCurrentIndex(4);
   app.processEvents();
   Engine *defender = tank_window.current_engine(1);
+  auto *meter_board = static_cast<BoardWidget *>(
+      tank_window.findChild<QWidget *>("board2"));
+  const QRect meter = meter_board->garbage_meter_rect();
+  const QPoint lower(meter.center().x(), meter.bottom() - 3);
+  const QPoint upper(meter.center().x(), meter.top() + 3);
+  check(meter.right() < meter_board->grid_rect().left() &&
+            meter_board->grab().toImage().pixelColor(lower) == QColor("#151c2b"),
+        "empty incoming meter must sit to the left of the board");
   defender->receive_garbage(12, 3);
   check(defender->pending_garbage_lines() == 12 && defender->board().max_height() == 0,
         "room garbage should wait in the queue while a piece is falling");
+  meter_board->update();
+  app.processEvents();
+  check(meter_board->grab().toImage().pixelColor(lower) == QColor("#f8c45c") &&
+            meter_board->grab().toImage().pixelColor(upper) == QColor("#151c2b"),
+        "incoming meter should fill from the bottom according to pending lines");
   QTest::keyClick(&tank_window, Qt::Key_Return);
   check(defender->pending_garbage_lines() == 12,
         "room garbage should not rise before its default travel delay");
@@ -496,8 +508,21 @@ int main(int argc, char **argv) {
     defender->tick();
   QTest::keyClick(&tank_window, Qt::Key_Return);
   check(defender->pending_garbage_lines() == 4 &&
-            tank_window.findChild<QLabel *>("status2")->text().contains("Incoming: 4"),
+             tank_window.findChild<QLabel *>("status2")->text().contains("Incoming: 4"),
         "a room placement should take only eight ready lines and display the rest");
+  defender->receive_garbage(16, 3);
+  meter_board->update();
+  app.processEvents();
+  check(defender->pending_garbage_lines() == 20 &&
+            meter_board->grab().toImage().pixelColor(upper) == QColor("#f8c45c"),
+        "20 incoming lines should fill the normal-color meter");
+  defender->receive_garbage(1, 3);
+  meter_board->update();
+  app.processEvents();
+  check(defender->pending_garbage_lines() == 21 &&
+            meter_board->grab().toImage().pixelColor(lower) == QColor("#ef4444") &&
+            meter_board->grab().toImage().pixelColor(upper) == QColor("#ef4444"),
+        "more than 20 incoming lines should switch the full meter to red");
   std::cout << "Qt solo editor, keyboard, and local room tests passed\n";
   return 0;
 }

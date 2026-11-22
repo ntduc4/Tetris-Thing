@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 from pathlib import Path
+import re
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -306,6 +307,80 @@ class TrainingEvaluationTests(unittest.TestCase):
                         self.fail("Must not train before archive check"),
                 )
             self.assertEqual(archive.read_bytes(), b"existing history")
+
+    def test_training_charts_read_full_history_without_training(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / "evaluations.jsonl"
+            records = [
+                {
+                    **sample_evaluation(),
+                    "episodes_trained": episode,
+                    "training_method": "monte_carlo",
+                    "lines_per_piece": 0.25,
+                    "mean_score": float(episode),
+                }
+                for episode in (100, 1200, 5100, 51100, 51200)
+            ]
+            records.append({**records[-2], "mean_score": 42.0})
+            original = "".join(json.dumps(record) + "\n" for record in records)
+            log.write_text(original)
+
+            history = notebook_helper("load_evaluation_history", {"json": json})
+            selected = history(log)
+            self.assertEqual([r["episodes_trained"] for r in selected],
+                             [100, 1200, 5100, 51100, 51200])
+            self.assertEqual(selected[3]["mean_score"], 42.0)
+
+            cell = next(
+                node for node in NOTEBOOK.body
+                if isinstance(node, ast.FunctionDef)
+                and {arg.arg for arg in node.args.args} >=
+                    {"checkpoint_dir", "refresh_charts"}
+            )
+            cell = copy.deepcopy(cell)
+            cell.decorator_list = []
+            namespace = {}
+            exec(compile(ast.Module(body=[cell], type_ignores=[]),
+                         "train.py", "exec"), namespace)
+
+            class FakeMo:
+                def __init__(self):
+                    self.markdown = []
+                    self.html = None
+
+                def md(self, text):
+                    self.markdown.append(text)
+                    return text
+
+                def Html(self, text):
+                    self.html = text
+                    return text
+
+                def vstack(self, items):
+                    return items
+
+            mo = FakeMo()
+            namespace["_"](checkpoint_dir=root, mo=mo,
+                           refresh_charts=SimpleNamespace(value=False))
+            self.assertEqual(mo.html.count("<svg "), 6)
+            paths = re.findall(r'<path d="([^"]+)"', mo.html)
+            self.assertEqual(len(paths), 12)
+            self.assertTrue(all(path.count(" L") == 4 for path in paths))
+            self.assertIn("51,200", mo.html)
+            self.assertIn("5 evaluations", mo.markdown[0])
+            self.assertIn("**100** to **51,200** total episodes", mo.markdown[0])
+            self.assertIn("all saved history", mo.markdown[0])
+            self.assertIn("three fixed seeds", mo.markdown[0])
+            self.assertEqual(log.read_text(), original)
+            self.assertEqual(list(root.iterdir()), [log])
+
+            empty_mo = FakeMo()
+            namespace["_"](checkpoint_dir=root / "missing",
+                           mo=empty_mo,
+                           refresh_charts=SimpleNamespace(value=False))
+            self.assertIsNone(empty_mo.html)
+            self.assertIn("No saved evaluations", empty_mo.markdown[0])
 
 
 if __name__ == "__main__":

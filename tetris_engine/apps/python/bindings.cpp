@@ -188,7 +188,7 @@ PYBIND11_MODULE(tetris_py, m) {
       .def_readonly("last_movement", &SpinContext::last_movement)
       .def_readonly("kick_offset", &SpinContext::kick_offset);
   py::class_<Placement>(m, "Placement",
-      "Engine-generated placement with its final pose and recorded movement path.")
+      "Engine-generated placement with its final pose, movement path, and spin.")
       .def_readonly("moves", &Placement::moves)
       .def_readonly("type", &Placement::type)
       .def_readonly("final_pos", &Placement::final_pos)
@@ -196,6 +196,7 @@ PYBIND11_MODULE(tetris_py, m) {
       .def_readonly("use_hold", &Placement::use_hold)
       .def_readonly("drop_distance", &Placement::drop_distance)
       .def_readonly("spin_context", &Placement::spin_context)
+      .def_readonly("spin", &Placement::spin)
       .def("cells", &Placement::cells,
            "Four landing cells before line clearing, in board row/column coordinates.");
   py::class_<Piece>(m, "Piece")
@@ -317,7 +318,8 @@ PYBIND11_MODULE(tetris_py, m) {
       .def(py::init<>())
       .def_readwrite("search_depth", &MisaMinoConfig::search_depth)
       .def_readwrite("beam_width", &MisaMinoConfig::beam_width)
-      .def_readwrite("node_budget", &MisaMinoConfig::node_budget);
+      .def_readwrite("node_budget", &MisaMinoConfig::node_budget)
+      .def_readwrite("search_threads", &MisaMinoConfig::search_threads);
   py::class_<MisaMinoEpisodeTurn>(m, "MisaMinoEpisodeTurn")
       .def_readonly("placement", &MisaMinoEpisodeTurn::placement)
       .def_readonly("lock", &MisaMinoEpisodeTurn::lock);

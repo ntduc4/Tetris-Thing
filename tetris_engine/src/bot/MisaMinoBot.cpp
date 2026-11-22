@@ -1,13 +1,16 @@
 #include "bot/MisaMinoBot.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <iterator>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -26,18 +29,33 @@ double stack_value(const Board &board, std::optional<PieceType> hold, bool b2b,
   const int width = board.get_width();
   const int height = board.get_height();
   std::vector<int> heights(width);
+  std::vector<uint8_t> occupied(width * height);
   double hole_cost = 0;
   int transitions = 0;
   int aggregate = 0;
+  int max_height = 0;
   const int visible_height = std::min<int>(height, VisibleHeight);
-  for (int col = 0; col < width; ++col) {
-    heights[col] = board.column_height(col);
+  // Scoring probes the same board cells for heights, holes, transitions and
+  // T cavities. Scan once instead of repeatedly calling Board::get and
+  // Board::max_height for every simulated candidate.
+  for (int row = 0; row < height; ++row)
+    for (int col = 0; col < width; ++col) {
+      const bool filled = board.get(row, col) != Cell::Empty;
+      occupied[row * width + col] = filled;
+      if (filled) {
+        heights[col] = row + 1;
+        max_height = row + 1;
+      }
+    }
+  auto filled = [&](int row, int col) {
+    return occupied[row * width + col] != 0;
+  };
+  for (int col = 0; col < width; ++col)
     aggregate += heights[col];
-  }
   for (int col = 0; col < width; ++col) {
     bool previous_hole = false;
     for (int row = 0; row < heights[col]; ++row) {
-      if (board.get(row, col) != Cell::Empty) {
+      if (filled(row, col)) {
         previous_hole = false;
         continue;
       }
@@ -62,17 +80,16 @@ double stack_value(const Board &board, std::optional<PieceType> hold, bool b2b,
   int bumpiness = 0;
   for (int col = 1; col < width; ++col)
     bumpiness += std::abs(heights[col] - heights[col - 1]);
-  for (int row = 0; row < board.max_height(); ++row) {
+  for (int row = 0; row < max_height; ++row) {
     bool previous = true; // Filled side walls.
     for (int col = 0; col < width; ++col) {
-      bool occupied = board.get(row, col) != Cell::Empty;
-      transitions += previous != occupied;
-      previous = occupied;
+      const bool cell_occupied = filled(row, col);
+      transitions += previous != cell_occupied;
+      previous = cell_occupied;
     }
     transitions += !previous;
   }
 
-  const int max_height = board.max_height();
   const int danger = std::max(0, max_height - height + 4);
   double value =
       -hole_cost - 1.7 * transitions - 2.2 * bumpiness -
@@ -90,16 +107,13 @@ double stack_value(const Board &board, std::optional<PieceType> hold, bool b2b,
   if (t_distance >= 0 && t_distance < 4) {
     for (int row = 1; row + 2 < height; ++row) {
       for (int col = 1; col + 1 < width; ++col) {
-        if (board.get(row, col) != Cell::Empty ||
-            board.get(row - 1, col - 1) != Cell::Empty ||
-            board.get(row - 1, col) != Cell::Empty ||
-            board.get(row - 1, col + 1) != Cell::Empty ||
-            board.get(row, col - 1) == Cell::Empty ||
-            board.get(row, col + 1) == Cell::Empty ||
-            board.get(row + 1, col) != Cell::Empty)
+        if (filled(row, col) || filled(row - 1, col - 1) ||
+            filled(row - 1, col) || filled(row - 1, col + 1) ||
+            !filled(row, col - 1) || !filled(row, col + 1) ||
+            filled(row + 1, col))
           continue;
         // Support the shoulders without encouraging an unfillable deep hole.
-        if (row > 1 && board.get(row - 2, col) == Cell::Empty)
+        if (row > 1 && !filled(row - 2, col))
           continue;
         value += 18.0 / (t_distance + 1);
       }
@@ -188,7 +202,6 @@ struct Candidate {
   double spins = 0;
   double score = 0;
   bool terminal = false;
-  std::string key;
 };
 
 using PlacementCache = std::unordered_map<std::string, std::vector<Placement>>;
@@ -269,7 +282,6 @@ std::optional<Placement> choose_with_cache(const Engine &engine,
 
   std::vector<Node> frontier;
   frontier.push_back({engine.clone()});
-  auto work = engine.clone();
   size_t expanded = 0;
   size_t best_first = 0;
   // A garbage rise can expose a hidden packet hole on the cloned board. With
@@ -284,10 +296,42 @@ std::optional<Placement> choose_with_cache(const Engine &engine,
               : static_cast<int>(
                     std::min<size_t>(config.search_depth, known_placements));
 
+  auto run_parents = [&](size_t count, auto &&process) {
+    const size_t hardware = std::max(1u, std::thread::hardware_concurrency());
+    const size_t workers = std::min({config.search_threads, hardware, count});
+    if (workers == 1) {
+      auto work = engine.clone();
+      for (size_t i = 0; i < count; ++i)
+        process(i, work);
+      return;
+    }
+    std::atomic<size_t> next_parent{0};
+    std::vector<std::exception_ptr> errors(workers);
+    auto run_worker = [&](size_t worker_index) {
+      try {
+        auto work = engine.clone();
+        for (size_t i = next_parent.fetch_add(1); i < count;
+             i = next_parent.fetch_add(1))
+          process(i, work);
+      } catch (...) {
+        errors[worker_index] = std::current_exception();
+      }
+    };
+    std::vector<std::jthread> threads;
+    threads.reserve(workers - 1);
+    for (size_t i = 1; i < workers; ++i)
+      threads.emplace_back(run_worker, i);
+    run_worker(0);
+    for (auto &thread : threads)
+      thread.join();
+    for (const auto &error : errors)
+      if (error)
+        std::rethrow_exception(error);
+  };
+
   for (int depth = 0; depth < depth_limit; ++depth) {
     const bool last_layer = depth + 1 == depth_limit;
     std::vector<Candidate> pool;
-    bool complete = true;
     bool has_best = false;
     double layer_best_score = 0;
     size_t layer_best_first = 0;
@@ -298,15 +342,53 @@ std::optional<Placement> choose_with_cache(const Engine &engine,
         has_best = true;
       }
     };
+    // Generate reachable actions before dispatching workers: the optional
+    // per-episode placement cache must only be mutated by this thread.
+    std::vector<std::vector<Placement>> generated(frontier.size());
+    std::vector<const std::vector<Placement> *> legal_by_parent(frontier.size());
+    size_t action_count = 0;
+    // Fresh choose() calls have no mutable placement cache. Generate each
+    // independent beam parent's placements concurrently as well as scoring
+    // them; this is the expensive reachability search on tall boards.
+    if (depth && !current && frontier.size() > 1)
+      run_parents(frontier.size(), [&](size_t index, Engine &) {
+        const auto &parent = frontier[index];
+        if (!parent.terminal && parent.game.active_piece())
+          generated[index] = actions(parent.game, parent.used, visible.size());
+      });
     for (size_t parent_index = 0; parent_index < frontier.size();
          ++parent_index) {
       const auto &parent = frontier[parent_index];
+      if (parent.terminal || !parent.game.active_piece())
+        continue;
+      const auto &legal =
+          !depth ? root_actions :
+          !current && frontier.size() > 1 ? generated[parent_index] :
+          legal_actions(parent.game, parent.used, generated[parent_index]);
+      legal_by_parent[parent_index] = &legal;
+      action_count += legal.size();
+    }
+    // The original search discarded an incomplete layer. Detect that before
+    // simulating it so the budget and chosen root action stay the same.
+    if (depth && action_count &&
+        (expanded >= config.node_budget ||
+         action_count > config.node_budget - expanded))
+      break;
+
+    struct ParentResult {
+      std::vector<Candidate> candidates;
+      std::optional<std::pair<double, size_t>> best;
+    };
+    std::vector<ParentResult> results(frontier.size());
+    auto process_parent = [&](size_t parent_index, Engine &work) {
+      const auto &parent = frontier[parent_index];
+      auto &result = results[parent_index];
       if (parent.terminal || !parent.game.active_piece()) {
         if (depth) {
           if (last_layer)
-            consider(parent.score, parent.first);
+            result.best = {parent.score, parent.first};
           else
-            pool.push_back(
+            result.candidates.push_back(
                 {.action = std::nullopt,
                  .parent = parent_index,
                  .used = parent.used,
@@ -315,20 +397,14 @@ std::optional<Placement> choose_with_cache(const Engine &engine,
                  .lines = parent.lines,
                  .spins = parent.spins,
                  .score = parent.score,
-                 .terminal = parent.terminal,
-                 .key = state_key(parent.game, parent.used, parent.attack,
-                                  parent.lines, parent.spins)});
+                 .terminal = parent.terminal});
         }
-        continue;
+        return;
       }
-      std::vector<Placement> generated;
-      const auto &legal = depth ? legal_actions(parent.game, parent.used, generated)
-                                : root_actions;
+      const auto &legal = *legal_by_parent[parent_index];
+      if (!last_layer)
+        result.candidates.reserve(legal.size());
       for (size_t index = 0; index < legal.size(); ++index) {
-        if (depth && expanded >= config.node_budget) {
-          complete = false;
-          break;
-        }
         const auto &action = legal[index];
         work.restore(parent.game);
         const auto lock = work.apply_placement(action);
@@ -367,28 +443,37 @@ std::optional<Placement> choose_with_cache(const Engine &engine,
             stack_value(board, work.hold_piece(), work.back_to_back(),
                         work.combo(), attack, lines, spins, incoming, terminal,
                         distance_to_t(work.hold_piece(), visible, used));
-        if (last_layer)
-          consider(score, depth ? parent.first : index);
-        else
-          pool.push_back(
-              {.action = action,
-               .parent = parent_index,
-               .used = used,
-               .first = depth ? parent.first : index,
-               .attack = attack,
-               .lines = lines,
-               .spins = spins,
-               .score = score,
-               .terminal = terminal,
-               .key = state_key(work, used, attack, lines, spins)});
-        ++expanded;
+        if (last_layer) {
+          if (!result.best || score > result.best->first)
+            result.best = {score, depth ? parent.first : index};
+        } else {
+          result.candidates.push_back(
+               {.action = action,
+                .parent = parent_index,
+                .used = used,
+                .first = depth ? parent.first : index,
+                .attack = attack,
+                .lines = lines,
+                .spins = spins,
+                .score = score,
+                .terminal = terminal});
+        }
       }
-      if (!complete)
-        break;
+    };
+    run_parents(frontier.size(), process_parent);
+    expanded += action_count;
+    // Merge in parent order: equal scores keep their original stable order,
+    // and all workers still compete in the same global beam.
+    for (auto &result : results) {
+      if (last_layer) {
+        if (result.best)
+          consider(result.best->first, result.best->second);
+      } else {
+        pool.insert(pool.end(), std::make_move_iterator(result.candidates.begin()),
+                    std::make_move_iterator(result.candidates.end()));
+      }
     }
-    // Do not choose from a partially expanded layer: it would favor the first
-    // beam parent solely because the budget ran out.
-    if (!complete || (last_layer ? !has_best : pool.empty()))
+    if (last_layer ? !has_best : pool.empty())
       break;
     if (last_layer) {
       best_first = layer_best_first;
@@ -403,8 +488,6 @@ std::optional<Placement> choose_with_cache(const Engine &engine,
     std::vector<Node> next;
     next.reserve(std::min(config.beam_width, pool.size()));
     for (const auto &candidate : pool) {
-      if (!seen.insert(candidate.key).second)
-        continue;
       auto game = frontier[candidate.parent].game.clone();
       if (candidate.action) {
         game.apply_placement(*candidate.action);
@@ -416,6 +499,11 @@ std::optional<Placement> choose_with_cache(const Engine &engine,
           game.spawn_next_piece(); // Also reproduce a known-piece spawn
                                    // failure.
       }
+      // Build the full continuation key only for contenders, not every
+      // simulated placement in the pool (often thousands for one layer).
+      if (!seen.insert(state_key(game, candidate.used, candidate.attack,
+                                 candidate.lines, candidate.spins)).second)
+        continue;
       next.push_back({std::move(game), candidate.used, candidate.first,
                       candidate.attack, candidate.lines, candidate.spins,
                       candidate.score, candidate.terminal});
@@ -430,7 +518,8 @@ std::optional<Placement> choose_with_cache(const Engine &engine,
 } // namespace
 
 MisaMinoBot::MisaMinoBot(MisaMinoConfig config) : _config(config) {
-  if (!config.search_depth || !config.beam_width || !config.node_budget)
+  if (!config.search_depth || !config.beam_width || !config.node_budget ||
+      !config.search_threads)
     throw std::invalid_argument("MisaMino search limits must be positive");
 }
 

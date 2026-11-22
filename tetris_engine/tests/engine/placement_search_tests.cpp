@@ -54,9 +54,10 @@ void test_generation_replay_and_atomic_rejection() {
               "every placement must replay and lock");
       require(result.score_delta == preview.score() - game.score(),
               "score delta must be the measured result of the lock");
-      require(preview.last_lock_result()->spin == result.spin &&
+      require(placement.spin == result.spin &&
+                  preview.last_lock_result()->spin == result.spin &&
                   preview.last_lock_result()->attack_sent == result.attack_sent,
-              "spin and attack metadata must come from the engine");
+              "generated spin must match the engine lock for active and hold");
       require(outcomes.insert({placement.final_pos.row, placement.final_pos.col,
                                static_cast<int>(placement.final_rotation),
                                result.spin}).second,
@@ -287,6 +288,8 @@ void test_mini_spin_and_non_spin_at_same_pose_keep_distinct_b2b() {
   }
   require(mini_count == 1 && ordinary_count == 1,
           "same pose must retain one mini and one non-spin, not duplicate paths");
+  require(mini->spin == SpinType::Mini && ordinary->spin == SpinType::None,
+          "placement metadata must distinguish spin and non-spin at the same pose");
   require(mini->drop_distance == 0 && ordinary->drop_distance > 0,
           "grounded rotation should spin; moving hard drop should not");
   require(mini->moves.back() == Movement::HardDrop &&
@@ -304,6 +307,11 @@ void test_mini_spin_and_non_spin_at_same_pose_keep_distinct_b2b() {
               mini_result.spin == SpinType::Mini &&
               ordinary_result.spin == SpinType::None,
           "both actions clear the same line, but only the spin scores a mini");
+  auto mislabeled = *mini;
+  mislabeled.spin = SpinType::None;
+  auto authoritative = game.clone();
+  require(authoritative.apply_placement(mislabeled).spin == SpinType::Mini,
+          "changing the candidate annotation must not change the actual lock");
   require(preserved.back_to_back() && !broken.back_to_back(),
           "T mini single preserves B2B whereas an ordinary single breaks it");
   require(preserved.board().render() == broken.board().render(),

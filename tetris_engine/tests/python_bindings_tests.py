@@ -33,6 +33,7 @@ def placement_key(placement):
         tuple(int(move) for move in placement.moves),
         int(placement.spin_context.last_movement),
         None if kick is None else (kick.row, kick.col),
+        int(placement.spin),
     )
 
 
@@ -98,7 +99,9 @@ class BindingsTests(unittest.TestCase):
         limits.search_depth = 2
         limits.beam_width = 4
         limits.node_budget = 1000
+        limits.search_threads = 2
         bot = t.MisaMinoBot(limits)
+        self.assertEqual(limits.search_threads, 2)
         self.assertIsNone(bot.choose(game))
         game.reset(17)
         self.assertTrue(game.spawn_next_piece())
@@ -160,7 +163,9 @@ class BindingsTests(unittest.TestCase):
         outcomes = []
         for p in matching_pose:
             clone = game.clone()
-            outcomes.append(clone.apply_placement(p).spin)
+            result = clone.apply_placement(p)
+            self.assertEqual(p.spin, result.spin)
+            outcomes.append(p.spin)
         self.assertIn(t.SpinType.None_, outcomes)
         self.assertIn(t.SpinType.Mini, outcomes)
         result = game.apply_placement(choice)

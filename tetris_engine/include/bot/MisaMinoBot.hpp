@@ -17,6 +17,9 @@ struct MisaMinoConfig {
   size_t beam_width = 12;
   /** Maximum simulated placements; all root actions are always examined. */
   size_t node_budget = 4000;
+  /** CPU workers for one search; set to 1 when running many games in parallel.
+   */
+  size_t search_threads = 12;
 };
 
 struct MisaMinoEpisodeTurn {
@@ -34,7 +37,8 @@ struct MisaMinoEpisode {
 
 /**
  * Independent adaptation of MisaMino's beam search and spin/attack-aware
- * evaluation. Not a port of its Windows code or a claim of move-for-move parity.
+ * evaluation. Not a port of its Windows code or a claim of move-for-move
+ * parity.
  *
  * The bot never changes the supplied Engine. It chooses an engine-generated,
  * replayable Placement; only the visible preview is used for lookahead. The

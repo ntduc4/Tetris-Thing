@@ -7,6 +7,16 @@
 
 namespace tetris::qtapp {
 
+namespace {
+constexpr int MeterWidth = 12;
+constexpr int MeterGap = 6;
+constexpr int MeterSpace = MeterWidth + MeterGap;
+constexpr int MeterCapacity = 20;
+const QColor MeterTrack("#151c2b");
+const QColor MeterNormal("#f8c45c");
+const QColor MeterOverflow("#ef4444");
+} // namespace
+
 QColor cell_color(Cell cell) {
   switch (cell) {
   case Cell::I: return QColor("#28c9d9"); // cyan
@@ -53,7 +63,7 @@ void BoardWidget::set_paint_handler(std::function<void(int, int, bool)> handler)
 QSize BoardWidget::sizeHint() const {
   int width = _engine ? _engine->board().get_width() : 10;
   int height = _engine ? std::min<int>(VisibleHeight, _engine->board().get_height()) : 20;
-  return QSize(width * 25 + 18, height * 25 + 18);
+  return QSize(width * 25 + 18 + MeterSpace, height * 25 + 18);
 }
 
 QRect BoardWidget::grid_rect() const {
@@ -61,11 +71,17 @@ QRect BoardWidget::grid_rect() const {
     return {};
   int width = _engine->board().get_width();
   int height = std::min<int>(VisibleHeight, _engine->board().get_height());
-  int size = std::max(1, std::min((this->width() - 16) / width,
-                                   (this->height() - 16) / height));
-  return QRect((this->width() - size * width) / 2,
-               (this->height() - size * height) / 2,
-               size * width, size * height);
+  int size = std::max(1, std::min((this->width() - 16 - MeterSpace) / width,
+                                    (this->height() - 16) / height));
+  return QRect((this->width() - size * width - MeterSpace) / 2 + MeterSpace,
+                (this->height() - size * height) / 2,
+                size * width, size * height);
+}
+
+QRect BoardWidget::garbage_meter_rect() const {
+  const QRect field = grid_rect();
+  return field.isEmpty() ? QRect() :
+      QRect(field.left() - MeterSpace, field.top(), MeterWidth, field.height());
 }
 
 void BoardWidget::paintEvent(QPaintEvent *) {
@@ -77,6 +93,19 @@ void BoardWidget::paintEvent(QPaintEvent *) {
   const int columns = _engine->board().get_width();
   const int rows = std::min<int>(VisibleHeight, _engine->board().get_height());
   const int size = playfield.width() / columns;
+  const QRect meter = garbage_meter_rect();
+  painter.fillRect(meter, MeterTrack);
+  painter.setPen(QColor("#354159"));
+  painter.drawRect(meter.adjusted(0, 0, -1, -1));
+  const uint32_t pending = _engine->pending_garbage_lines();
+  if (pending) {
+    const QRect interior = meter.adjusted(2, 2, -2, -2);
+    const int filled = interior.height() *
+                       std::min<uint32_t>(pending, MeterCapacity) / MeterCapacity;
+    painter.fillRect(QRect(interior.left(), interior.bottom() - filled + 1,
+                           interior.width(), filled),
+                     pending > MeterCapacity ? MeterOverflow : MeterNormal);
+  }
   painter.fillRect(playfield, QColor("#253048"));
   auto cells = _engine->render();
   auto ghost = _engine->ghost_piece();

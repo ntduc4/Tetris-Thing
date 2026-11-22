@@ -198,7 +198,7 @@ def _(tetris_py, torch):
                 "b2b_delta": b2b_count - pre_b2b_count
             }
             height_after = self._engine.board.max_height()
-            reward = lock.attack_sent + info["b2b_delta"] + lock.lines_cleared
+            reward = 2 * lock.attack_sent + info["b2b_delta"] + lock.lines_cleared
             if terminated:          # Top-out, not the 500-piece time limit
                 reward -= 50.0
             return self.observe(), reward, terminated, truncated, info
@@ -314,9 +314,9 @@ def _(available_placements, env, mo, placement_index, show_hidden):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## AI model section
+    # AI model section
 
-    ### Q function definition and input encoding
+    ## Q function definition and input encoding
     """)
     return
 
@@ -386,23 +386,34 @@ def _(PREVIEW_COUNT, nn, np, tetris_py):
             placement.drop_distance / height,
         ], dtype=np.float32)
 
+        state_feature = np.array([
+            float(observation["back_to_back"]),
+            np.log1p(observation["back_to_back_count"]) / np.log1p(20.0),
+            np.log1p(observation["combo"]) / np.log1p(20.0),
+        ], dtype=np.float32)
+        spin_one_hot = np.zeros(3, dtype=np.float32)
+        spin_one_hot[int(placement.spin)] = 1.0
+    
+
         return np.concatenate((
             occupied, garbage, landing.ravel(),
             piece_one_hot(observation["active_piece"]), active_rotation, active,
             piece_one_hot(observation["hold_piece"]), *previews,
             candidate_piece, candidate_rotation, action,
             np.array([observation["pending_garbage_lines"] / height], dtype=np.float32),
+            state_feature,
+            spin_one_hot
         ))
 
     gamma = 0.99
-    ENCODING_VERSION = 3
+    ENCODING_VERSION = 4
     return ENCODING_VERSION, PlacementQFunction, encode, gamma
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Choosing an action
+    ## Choosing an action
     """)
     return
 
@@ -444,7 +455,7 @@ def _(PlacementQFunction, device, encode, env, np, torch):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Training step
+    ## Training step
     """)
     return
 
@@ -495,7 +506,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Save and load model
+    ## Save and load model
     """)
     return
 
@@ -535,7 +546,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Greedy evaluation helper
+    ## Greedy evaluation helper
     """)
     return
 
@@ -651,18 +662,19 @@ def _(device, encode, env, np, torch):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Full episode training (Q-learning)
+    ## Pick an action
     """)
     return
 
 
 @app.cell
-def _(F, PlacementEnv, device, encode, nn, np, tetris_py, torch):
+def _(PlacementEnv, device, encode, nn, np, tetris_py, torch):
     import random
 
     rng = random.Random(6789)
 
-    def get_current_action(training_env: PlacementEnv, observation, model: nn.Module, epsilon: float) -> tetris_py.Placement:
+
+    def get_action_random(training_env: PlacementEnv, observation, model: nn.Module, epsilon: float) -> tetris_py.Placement:
         actions = training_env.legal_placements()
         features = np.stack([encode(observation, a) for a in actions])
         batch = torch.as_tensor(features, dtype=torch.float32, device=device)
@@ -673,6 +685,44 @@ def _(F, PlacementEnv, device, encode, nn, np, tetris_py, torch):
         return action
 
 
+    def get_action_expert(training_env: PlacementEnv, observation, model: nn.Module, epsilon: float) -> tetris_py.Placement:
+        actions = training_env.legal_placements()
+        if rng.random() < epsilon:
+            teacher_action = training_env.misamino_choice()
+            teacher_index = actions.index(teacher_action)
+            chosen_index = teacher_index  
+        else: 
+            features = np.stack([encode(observation, a) for a in actions])
+            batch = torch.as_tensor(features, dtype=torch.float32, device=device)
+            with torch.no_grad():
+                scores = model(batch)
+            chosen_index = int(scores.argmax().item())
+        action = actions[chosen_index]
+        return action
+
+    return get_action_expert, get_action_random
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Full episode training (Q-learning)
+    """)
+    return
+
+
+@app.cell
+def _(
+    F,
+    PlacementEnv,
+    device,
+    encode,
+    get_action_expert,
+    get_action_random,
+    nn,
+    np,
+    torch,
+):
     def train_an_episode_q_learning(
         seed: int,
         q_online: nn.Module,
@@ -680,10 +730,11 @@ def _(F, PlacementEnv, device, encode, nn, np, tetris_py, torch):
         training_env: PlacementEnv,
         gamma: float,
         epsilon: float = 0.05,
+        explore_random: bool = False,
     ):
         observation = training_env.reset(seed)
         while True:
-            action = get_current_action(training_env, observation, q_online, epsilon)
+            action = get_action_random(training_env, observation, q_online, epsilon) if explore_random else get_action_expert(training_env, observation, q_online, epsilon)
             next_observation, reward, terminated, truncated, info = training_env.step(action)
 
             current_input = torch.as_tensor(
@@ -710,13 +761,13 @@ def _(F, PlacementEnv, device, encode, nn, np, tetris_py, torch):
             if terminated or truncated:
                 break
 
-    return get_current_action, train_an_episode_q_learning
+    return (train_an_episode_q_learning,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Full episode training (Behaviour cloning)
+    ## Full episode training (Behaviour cloning)
     """)
     return
 
@@ -758,7 +809,7 @@ def _(F, device, encode, nn, np, torch):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Full episode training (Monte carlo learning)
+    ## Full episode training (Monte carlo learning)
     """)
     return
 
@@ -771,7 +822,8 @@ def _(
     Tuple,
     device,
     encode,
-    get_current_action,
+    get_action_expert,
+    get_action_random,
     nn,
     tetris_py,
     torch,
@@ -783,13 +835,14 @@ def _(
         training_env: PlacementEnv,
         gamma: float,
         epsilon: float = 0.05,
+        explore_random: bool = False,
     ):
         observation = training_env.reset(seed)
         steps: List[Tuple[dict, tetris_py.Placement, int]] = []
 
         # Episode generation
         while True:
-            action = get_current_action(training_env, observation, q_online, epsilon)
+            action = get_action_random(training_env, observation, q_online, epsilon) if explore_random else get_action_expert(training_env, observation, q_online, epsilon)
             next_observation, reward, terminated, truncated, info = training_env.step(action)
             steps.append((observation, action, reward))
 
@@ -816,7 +869,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Checkpoint helpers
+    ## Checkpoint helpers
     """)
     return
 
@@ -939,7 +992,7 @@ def _(ENCODING_VERSION, PlacementQFunction, device, feature_dim, gamma, torch):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Profiling
+    ## Profiling
     """)
     return
 
@@ -979,7 +1032,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Training loop
+    ## Training loop
 
     Both buttons resume the same `shared/latest.pt`; the button chooses the
     training method. On the first run, the newest existing Q or BC checkpoint
@@ -995,7 +1048,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    N_EPISODES = 50000
+    N_EPISODES = 990
     q_train_button = mo.ui.run_button(label=f"Train Q-learning ({N_EPISODES} episodes)")
     mc_train_button = mo.ui.run_button(label=f"Train Monte carlo ({N_EPISODES} episodes)")
     bc_train_button = mo.ui.run_button(
@@ -1079,6 +1132,7 @@ def _(
                 training_env=_train_env,
                 gamma=gamma,
                 epsilon=0.1,
+                explore_random=True,
             )
         _finished = _episode + 1
         if _finished % 100 == 0 or _finished == episodes_trained:
@@ -1106,6 +1160,151 @@ def _(
         trained_model,
         training_method,
     )
+
+
+@app.cell
+def _(mo):
+    refresh_charts = mo.ui.run_button(label="Refresh training charts")
+    mo.vstack([
+        mo.md(
+            "### Training progress\n\n"
+            "Read-only plots of the saved greedy evaluations. Refresh after a "
+            "training run to load new results; this does not start training."
+        ),
+        refresh_charts,
+    ])
+    return (refresh_charts,)
+
+
+@app.cell
+def _(checkpoint_dir, mo, refresh_charts):
+    import json
+    from html import escape
+
+    def load_evaluation_history(path):
+        """Return all saved evaluations, using the latest result per episode."""
+        if not path.exists():
+            return []
+        with path.open() as file:
+            records = [json.loads(line) for line in file if line.strip()]
+        if not records:
+            return []
+        by_episode = {int(record["episodes_trained"]): record for record in records}
+        return [by_episode[episode] for episode in sorted(by_episode)]
+
+    def evaluation_chart(records, title, key, tick_format="count", scale=1):
+        """Draw an SVG chart without adding a plotting-library dependency."""
+        width, height = 560, 250
+        left, right, top, bottom = 66, 20, 30, 43
+        plot_width = width - left - right
+        plot_height = height - top - bottom
+        episodes = [int(record["episodes_trained"]) for record in records]
+        values = [float(record[key]) * scale for record in records]
+        # Smooth over up to ten saved evaluations, regardless of their cadence.
+        smoothed = [
+            sum(values[max(0, i - 9):i + 1]) / min(i + 1, 10)
+            for i in range(len(values))
+        ]
+        ymax = 100 if tick_format == "percent" else max(values) * 1.05 or 1
+
+        def x(episode):
+            if len(episodes) == 1:
+                return left + plot_width / 2
+            return left + plot_width * (
+                (episode - episodes[0]) / (episodes[-1] - episodes[0])
+            )
+
+        def y(value):
+            return top + plot_height * (1 - value / ymax)
+
+        def path(series):
+            return " ".join(
+                f"{'M' if i == 0 else 'L'}{x(episode):.1f},{y(value):.1f}"
+                for i, (episode, value) in enumerate(zip(episodes, series))
+            )
+
+        def label(value):
+            if tick_format == "percent":
+                return f"{value:.0f}%"
+            if tick_format == "ratio":
+                return f"{value:.2f}"
+            return f"{value:,.0f}"
+
+        parts = [
+            f'<svg viewBox="0 0 {width} {height}" role="img" '
+            f'aria-label="{escape(title)} by total training episodes" '
+            'style="width:100%;height:auto;background:#fff;border:1px solid '
+            '#e2e8f0;border-radius:8px">',
+            f'<text x="{left}" y="21" font-size="15" font-weight="600" '
+            f'fill="#0f172a">{escape(title)}</text>',
+        ]
+        for fraction in (0, 0.5, 1):
+            value = ymax * fraction
+            position = y(value)
+            parts.append(
+                f'<line x1="{left}" y1="{position:.1f}" x2="{width - right}" '
+                f'y2="{position:.1f}" stroke="#e2e8f0"/>'
+                f'<text x="{left - 9}" y="{position + 4:.1f}" text-anchor="end" '
+                f'font-size="11" fill="#475569">{label(value)}</text>'
+            )
+        for episode in sorted({episodes[0], (episodes[0] + episodes[-1]) // 2,
+                               episodes[-1]}):
+            parts.append(
+                f'<text x="{x(episode):.1f}" y="{height - 12}" '
+                f'text-anchor="middle" font-size="11" fill="#475569">'
+                f'{episode:,}</text>'
+            )
+        parts.extend([
+            f'<path d="{path(values)}" fill="none" stroke="#94a3b8" '
+            'stroke-width="1.2" stroke-opacity="0.8"/>',
+            f'<path d="{path(smoothed)}" fill="none" stroke="#2563eb" '
+            'stroke-width="2.5"/>',
+            f'<circle cx="{x(episodes[-1]):.1f}" cy="{y(values[-1]):.1f}" '
+            'r="3" fill="#2563eb"/>',
+            '</svg>',
+        ])
+        return "".join(parts)
+
+    _ = refresh_charts.value
+    _history = load_evaluation_history(checkpoint_dir / "evaluations.jsonl")
+    if not _history:
+        _charts_view = mo.md(
+            "No saved evaluations found yet in `shared/evaluations.jsonl`."
+        )
+    else:
+        _metrics = (
+            ("Mean score", "mean_score", "count", 1),
+            ("Pieces survived", "mean_pieces_placed", "count", 1),
+            ("Lines cleared", "mean_lines_cleared", "count", 1),
+            ("Attack sent", "mean_attack_sent", "count", 1),
+            ("Lines per piece", "lines_per_piece", "ratio", 1),
+            ("Piece-cap rate", "piece_cap_rate", "percent", 100),
+        )
+        _methods = ", ".join(sorted({
+            record.get("training_method", "unknown") for record in _history
+        }))
+        _charts_view = mo.vstack([
+            mo.md(
+                f"**{len(_history)} evaluations**, from "
+                f"**{_history[0]['episodes_trained']:,}** to "
+                f"**{_history[-1]['episodes_trained']:,}** total episodes "
+                f"(all saved history; methods: `{_methods}`). "
+                "Each point is a greedy evaluation on three fixed seeds, "
+                "not a training-episode result. Gray: raw evaluation; "
+                "blue: trailing average of up to 10 evaluations."
+            ),
+            mo.Html(
+                '<div style="display:grid;grid-template-columns:repeat('
+                'auto-fit,minmax(min(100%,380px),1fr));gap:12px">'
+                + "".join(
+                    evaluation_chart(_history, title, key, tick_format, scale)
+                    for title, key, tick_format, scale in _metrics
+                )
+                + "</div>"
+            ),
+        ])
+    _charts_view
+    return
 
 
 @app.cell(hide_code=True)

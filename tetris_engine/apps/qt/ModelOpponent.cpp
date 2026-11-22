@@ -117,6 +117,7 @@ void ModelOpponent::choose(const Engine &game) {
         {"final_pos", position(placement.final_pos.row, placement.final_pos.col)},
         {"drop_distance", static_cast<int>(placement.drop_distance)},
         {"use_hold", placement.use_hold},
+        {"spin", static_cast<int>(placement.spin)},
         {"cells", cells},
     });
   }
