@@ -1,0 +1,20 @@
+{
+  "active_piece": "J",
+  "height": 40,
+  "hold_piece": null,
+  "next_pieces": "",
+  "template": {
+    "height": 2,
+    "row_modes_bottom_up": [
+      "filled",
+      "filled"
+    ],
+    "rows_bottom_up": [
+      "...",
+      ".GG"
+    ],
+    "width": 3
+  },
+  "version": 2,
+  "width": 10
+}

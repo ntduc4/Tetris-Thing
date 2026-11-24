@@ -7,6 +7,7 @@ add_library(tetris_engine
     src/core/Piece.cpp
     src/engine/Engine.cpp
     src/engine/Match.cpp
+    src/engine/Opening.cpp
     src/engine/RNG.cpp
     src/engine/Rules.cpp
     src/engine/SoloSession.cpp
@@ -46,6 +47,8 @@ if(TETRIS_BUILD_QT)
             apps/qt/ModelOpponent.cpp
             apps/qt/PieceQueueWidget.cpp
             apps/qt/RulesDialog.cpp
+            apps/qt/SpinSetupDialog.cpp
+            apps/qt/SpinPatternWidget.cpp
         )
         target_compile_features(tetris_qt_widgets PUBLIC cxx_std_20)
         target_compile_definitions(tetris_qt_widgets PRIVATE
@@ -170,6 +173,11 @@ target_link_libraries(tetris_engine_placement_search_tests PRIVATE tetris_engine
 target_include_directories(tetris_engine_placement_search_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_test(NAME tetris_engine_placement_search_tests COMMAND tetris_engine_placement_search_tests)
 
+add_executable(tetris_engine_opening_tests tests/engine/opening_spec_tests.cpp)
+target_link_libraries(tetris_engine_opening_tests PRIVATE tetris_engine)
+target_include_directories(tetris_engine_opening_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+add_test(NAME tetris_engine_opening_tests COMMAND tetris_engine_opening_tests)
+
 add_executable(tetris_bot_tests tests/bot/misamino_bot_tests.cpp)
 target_link_libraries(tetris_bot_tests PRIVATE tetris_bot)
 target_include_directories(tetris_bot_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
@@ -187,6 +195,11 @@ if(TARGET tetris_qt_widgets)
         target_link_libraries(tetris_qt_controls_tests PRIVATE tetris_qt_widgets Qt6::Test)
         add_test(NAME tetris_qt_controls_tests COMMAND tetris_qt_controls_tests)
         set_tests_properties(tetris_qt_controls_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+        add_executable(tetris_qt_spin_setup_tests tests/qt_spin_setup_tests.cpp)
+        target_link_libraries(tetris_qt_spin_setup_tests PRIVATE tetris_qt_widgets Qt6::Test)
+        add_test(NAME tetris_qt_spin_setup_tests COMMAND tetris_qt_spin_setup_tests)
+        set_tests_properties(tetris_qt_spin_setup_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
         find_package(Python3 QUIET COMPONENTS Interpreter)
         if(Python3_Interpreter_FOUND)
             add_executable(tetris_model_match_tests tests/model_match_tests.cpp)

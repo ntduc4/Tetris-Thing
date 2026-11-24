@@ -1,0 +1,26 @@
+{
+    "active_piece": "T",
+    "height": 40,
+    "hold_piece": null,
+    "next_pieces": "",
+    "template": {
+        "height": 5,
+        "row_modes_bottom_up": [
+            "filled",
+            "filled",
+            "filled",
+            "overhang",
+            "overhang"
+        ],
+        "rows_bottom_up": [
+            "GG.G",
+            "G..G",
+            "GG.G",
+            "...G",
+            "..GG"
+        ],
+        "width": 4
+    },
+    "version": 2,
+    "width": 10
+}

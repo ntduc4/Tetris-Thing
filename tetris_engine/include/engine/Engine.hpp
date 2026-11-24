@@ -139,6 +139,33 @@ public:
   std::optional<PieceType> hold_piece() const { return _hold_piece; }
   /** Returns the visible preview queue. */
   std::vector<PieceType> preview_queue() const;
+  /** Override the opening active/next pieces and optional held piece after reset.
+   * Scripted pieces are consumed first; the seeded randomizer resumes afterward.
+   * Call before the first spawn. An empty sequence is not a valid opening.
+   */
+  void set_opening_pieces(const std::vector<PieceType> &pieces,
+                          std::optional<PieceType> hold = std::nullopt);
+  struct OpeningTransform {
+    uint16_t offset = 0;
+    bool mirrored = false;
+  };
+  /** Generate a starting board after reset and before the first spawn.
+   * Clean garbage rows at the bottom share one hole; cheese rows above them
+   * choose independent holes. The optional pattern sits above both, shifted
+   * horizontally and (unless disabled for legacy boards) mirrored by seed.
+   * Filled pattern rows use garbage outside the box; overhang rows stay empty.
+   * S/Z and J/L are swapped in painted cells and scripted active/next/hold
+   * pieces when mirrored.
+   * An empty pattern and pieces list uses the usual seeded bag.
+   * This does not decide whether a spin is used or how many rows to add.
+   */
+  OpeningTransform generate_opening(
+      const std::vector<std::vector<Cell>> &pattern,
+      const std::vector<bool> &filled_rows,
+      uint16_t clean_garbage_layers, uint16_t cheese_garbage_layers,
+      uint64_t seed, const std::vector<PieceType> &pieces = {},
+      std::optional<PieceType> hold = std::nullopt,
+      bool allow_mirror = true);
   /** Renders the current board state. */
   std::vector<std::vector<Cell>> render() const;
 
@@ -268,6 +295,7 @@ private:
   Board _board;
   std::optional<ActivePiece> _active_piece;
   std::optional<PieceType> _hold_piece;
+  std::deque<PieceType> _opening_pieces;
   bool _game_over = false;
   bool _can_hold = true;
   uint32_t _lines_cleared = 0;
@@ -315,6 +343,8 @@ private:
   /** Restarts grounded lock timing after a successful player movement. */
   void on_player_move(bool was_grounded, uint16_t cells_moved = 1);
   ActivePiece spawn_piece(PieceType type) const;
+  PieceType next_piece() const;
+  void consume_next_piece();
   void descended_to(const ActivePiece &piece);
   /** Applies ready packets in arrival order; Guideline rises after any lock. */
   void apply_ready_garbage();

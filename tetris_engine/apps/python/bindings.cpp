@@ -264,12 +264,27 @@ PYBIND11_MODULE(tetris_py, m) {
       .def_readonly("attack_sent", &TickResult::attack_sent)
       .def_readonly("attack_packets", &TickResult::attack_packets);
 
+  py::class_<Engine::OpeningTransform>(m, "OpeningTransform")
+      .def_readonly("offset", &Engine::OpeningTransform::offset)
+      .def_readonly("mirrored", &Engine::OpeningTransform::mirrored);
   py::class_<Engine>(m, "Engine",
       "Headless engine. Call reset(seed) and spawn_next_piece(); locks do not spawn.")
       .def(py::init([](const EngineConfig &config) {
         return std::make_unique<Engine>(make_engine(config));
       }), py::arg("config") = EngineConfig{})
-      .def("reset", &Engine::reset, py::arg("seed") = 0)
+       .def("reset", &Engine::reset, py::arg("seed") = 0)
+       .def("set_opening_pieces", &Engine::set_opening_pieces,
+             py::arg("pieces"), py::arg("hold") = py::none(),
+             "Set scripted active/next pieces and optional hold before spawning. "
+             "The seeded bag resumes when the sequence is exhausted.")
+       .def("generate_opening", &Engine::generate_opening,
+            py::arg("pattern"), py::arg("filled_rows"),
+            py::arg("clean_garbage_layers"), py::arg("cheese_garbage_layers"),
+            py::arg("seed"), py::arg("pieces") = std::vector<PieceType>{},
+            py::arg("hold") = py::none(), py::arg("allow_mirror") = true,
+            "Generate a seed-shifted/mirrored starting board above clean and "
+            "cheese garbage, mirroring scripted S/Z and J/L as necessary. "
+            "Call after reset, before spawning; selection/counts are the caller's policy.")
       .def("clone", [](const Engine &engine) {
         return std::make_unique<Engine>(engine.clone());
       }, "Independent engine copy, including RNG and hidden bag state. Keep it out of model inputs.")

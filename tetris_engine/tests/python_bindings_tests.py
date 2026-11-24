@@ -1,8 +1,18 @@
 """Smoke and regression tests for the optional headless Python module."""
 
 import unittest
+import ast
+import json
+import random
+from dataclasses import dataclass
+from pathlib import Path
+import sys
+import tempfile
 
 import tetris_py as t
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tetris_ai"))
+from spin_setup import load_spin_setup
 
 
 def i_piece_seed():
@@ -38,6 +48,374 @@ def placement_key(placement):
 
 
 class BindingsTests(unittest.TestCase):
+    def test_scripted_opening_prefilled_hold_and_seeded_fallback(self):
+        cfg = t.EngineConfig()
+        cfg.gravity = 0
+        game = t.Engine(cfg)
+        reference = t.Engine(cfg)
+        game.reset(42)
+        reference.reset(42)
+        fallback = reference.preview_queue()
+        game.set_opening_pieces([t.PieceType.T, t.PieceType.I], t.PieceType.S)
+        self.assertEqual(game.preview_queue()[:5],
+                         [t.PieceType.T, t.PieceType.I, *fallback[:3]])
+        self.assertEqual(game.hold_piece, t.PieceType.S)
+        self.assertTrue(game.spawn_next_piece())
+        self.assertEqual(game.active_piece.piece.type, t.PieceType.T)
+        self.assertEqual(game.preview_queue()[:5],
+                         [t.PieceType.I, *fallback[:4]])
+        snapshot = game.clone()
+        self.assertTrue(game.hold())
+        self.assertEqual(game.active_piece.piece.type, t.PieceType.S)
+        self.assertEqual(game.hold_piece, t.PieceType.T)
+        self.assertEqual(game.preview_queue()[0], t.PieceType.I)
+        game.restore(snapshot)
+        self.assertEqual(game.active_piece.piece.type, t.PieceType.T)
+        self.assertEqual(game.hold_piece, t.PieceType.S)
+        self.assertEqual(game.preview_queue()[0], t.PieceType.I)
+        with self.assertRaises(RuntimeError):
+            game.set_opening_pieces([t.PieceType.O])
+        self.assertTrue(game.hard_drop().locked)
+        self.assertTrue(game.spawn_next_piece())
+        self.assertEqual(game.active_piece.piece.type, t.PieceType.I)
+        self.assertEqual(game.preview_queue(), fallback)
+        game.reset(42)
+        self.assertIsNone(game.hold_piece)
+        self.assertEqual(game.preview_queue(), fallback)
+        with self.assertRaises(ValueError):
+            game.set_opening_pieces([])
+
+        empty_hold = t.Engine(cfg)
+        empty_hold.reset(42)
+        empty_hold.set_opening_pieces(
+            [t.PieceType.T, t.PieceType.O, t.PieceType.I])
+        self.assertTrue(empty_hold.spawn_next_piece())
+        next_before = empty_hold.preview_queue()
+        invalid = t.Engine(cfg)
+        invalid.reset(42)
+        invalid.set_opening_pieces(
+            [t.PieceType.T, t.PieceType.S, t.PieceType.I])
+        self.assertTrue(invalid.spawn_next_piece())
+        wrong_held_action = invalid.generate_hold_piece_placement()[0]
+        with self.assertRaises(ValueError):
+            empty_hold.apply_placement(wrong_held_action)
+        self.assertEqual(empty_hold.preview_queue(), next_before)
+        self.assertIsNone(empty_hold.hold_piece)
+        self.assertTrue(empty_hold.can_hold)
+        self.assertEqual(empty_hold.active_piece.piece.type, t.PieceType.T)
+        self.assertTrue(empty_hold.hold())
+        self.assertEqual(empty_hold.active_piece.piece.type, t.PieceType.O)
+        self.assertEqual(empty_hold.preview_queue()[0], t.PieceType.I)
+
+    def test_qt_spin_setup_json_loads_into_engine(self):
+        board = ["." * 10 for _ in range(40)]
+        board[0] = "G........."
+        example = {
+            "version": 1, "width": 10, "height": 40,
+            "board_rows_bottom_up": board,
+            "active_piece": "T", "hold_piece": "I", "next_pieces": "OTS",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "spin.json"
+            path.write_text(json.dumps(example), encoding="utf-8")
+            setup = load_spin_setup(path)
+            config = t.EngineConfig()
+            config.gravity = 0
+            game = t.Engine(config)
+            setup.apply(game, 42, t)
+            self.assertEqual(game.board.get(0, 0), t.Cell.Garbage)
+            self.assertEqual(game.active_piece.piece.type, t.PieceType.T)
+            self.assertEqual(game.hold_piece, t.PieceType.I)
+            self.assertEqual(game.preview_queue()[:3],
+                             [t.PieceType.O, t.PieceType.T, t.PieceType.S])
+            self.assertTrue(game.generate_active_piece_placement())
+            self.assertTrue(game.generate_hold_piece_placement())
+            reference = t.Engine(config)
+            reference.reset(42)
+            self.assertEqual(game.preview_queue()[3:],
+                             reference.preview_queue()[:2])
+            game.reset(42)
+            self.assertEqual(game.board.get(0, 0), t.Cell.Empty)
+            self.assertIsNone(game.hold_piece)
+            self.assertEqual(game.preview_queue(), reference.preview_queue())
+
+            bad = dict(example)
+            bad["board_rows_bottom_up"] = board[:]
+            bad["board_rows_bottom_up"][20] = "X" + "." * 9
+            path.write_text(json.dumps(bad), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_spin_setup(path)
+            bad = dict(example, active_piece="INVALID")
+            path.write_text(json.dumps(bad), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_spin_setup(path)
+            bad = dict(example, version=2)
+            path.write_text(json.dumps(bad), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_spin_setup(path)
+
+            # The notebook's environment must opt in on reset, rather than
+            # changing the training loop or the default seeded opening.
+            notebook = ast.parse((Path(__file__).resolve().parents[2] /
+                                  "tetris_ai/train.py").read_text())
+            cell = next(node for node in notebook.body
+                        if isinstance(node, ast.FunctionDef) and
+                        any(isinstance(child, ast.ClassDef) and
+                            child.name == "PlacementEnv" for child in node.body))
+            classes = [child for child in cell.body
+                       if isinstance(child, ast.ClassDef) and
+                       child.name in ("EnvCheckpoint", "PlacementEnv")]
+            namespace = {
+                "tetris_py": t, "dataclass": dataclass,
+                "BOARD_WIDTH": 10, "BOARD_HEIGHT": 40, "PREVIEW_COUNT": 5,
+            }
+            exec(compile(ast.Module(body=classes, type_ignores=[]),
+                         "train.py", "exec"), namespace)
+            Env = namespace["PlacementEnv"]
+            env = Env(piece_cap=3)
+            default = env.reset(42)
+            self.assertEqual(default["board"][0][0], int(t.Cell.Empty))
+            self.assertIsNone(default["hold_piece"])
+            # Restore the valid setup file after invalid-data tests.
+            path.write_text(json.dumps(example), encoding="utf-8")
+            loaded = load_spin_setup(path)
+            opening = env.reset(42, spin_setup=loaded)
+            self.assertEqual(opening["board"][0][0], int(t.Cell.Garbage))
+            self.assertEqual(opening["active_piece"], int(t.PieceType.T))
+            self.assertEqual(opening["hold_piece"], int(t.PieceType.I))
+            self.assertEqual(opening["preview"][:3],
+                             (int(t.PieceType.O), int(t.PieceType.T),
+                              int(t.PieceType.S)))
+            checkpoint = env.checkpoint()
+            action = env.legal_placements()[0]
+            env.step(action)
+            self.assertEqual(env.restore(checkpoint), opening)
+            self.assertTrue(env.legal_placements())
+            self.assertEqual(env.reset(42), default)
+            blocked = dict(example)
+            blocked["board_rows_bottom_up"] = board[:]
+            blocked["board_rows_bottom_up"][19] = "....G....."
+            path.write_text(json.dumps(blocked), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "spawn"):
+                env.reset(42, spin_setup=load_spin_setup(path))
+            self.assertTrue(env.done)
+
+            modular = {
+                "version": 2, "width": 10, "height": 40,
+                "template": {
+                    "width": 3, "height": 3,
+                    "rows_bottom_up": [".G.", "G..", "G.."],
+                    "row_modes_bottom_up": ["filled", "filled", "overhang"],
+                },
+                "active_piece": "T", "hold_piece": "I", "next_pieces": "OTS",
+            }
+            path.write_text(json.dumps(modular), encoding="utf-8")
+            template = load_spin_setup(path)
+            transforms = set()
+            for seed in range(40):
+                expanded, x, mirrored = template.render(seed)
+                transforms.add((x, mirrored))
+                self.assertEqual(template.render(seed), (expanded, x, mirrored))
+                self.assertEqual(expanded[0][:x], "G" * x)
+                self.assertEqual(expanded[0][x + 3:], "G" * (7 - x))
+                self.assertEqual(expanded[0][x:x + 3], ".G.")
+                self.assertEqual(expanded[1][x:x + 3],
+                                 "..G" if mirrored else "G..")
+                self.assertEqual(expanded[2][:x], "." * x)
+                self.assertEqual(expanded[2][x + 3:], "." * (7 - x))
+                self.assertEqual(expanded[2][x:x + 3],
+                                 "..G" if mirrored else "G..")
+                self.assertTrue(all(row == "." * 10 for row in expanded[3:]))
+                opening = env.reset(seed, spin_setup=template)
+                self.assertEqual(
+                    opening["board"],
+                    tuple(tuple(".IOTSZJLGX".index(cell) for cell in row)
+                          for row in expanded))
+                self.assertEqual(opening["active_piece"], int(t.PieceType.T))
+                self.assertEqual(opening["hold_piece"], int(t.PieceType.I))
+                self.assertEqual(opening["preview"][:3],
+                                 (int(t.PieceType.O), int(t.PieceType.T),
+                                  int(t.PieceType.Z if mirrored else t.PieceType.S)))
+                baseline = t.Engine(config)
+                baseline.reset(seed)
+                self.assertEqual(opening["preview"][3:],
+                                 tuple(int(p) for p in baseline.preview_queue()[:2]))
+                self.assertTrue(baseline.spawn_next_piece())
+                self.assertEqual(env._engine.active_piece.pos.col,
+                                 baseline.active_piece.pos.col)
+            self.assertGreater(len({x for x, _ in transforms}), 1)
+            self.assertEqual({flip for _, flip in transforms}, {False, True})
+            self.assertEqual(env.reset(42), default)
+
+            modular["template"]["row_modes_bottom_up"] = ["filled", "wrong", "overhang"]
+            path.write_text(json.dumps(modular), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_spin_setup(path)
+            modular["template"]["row_modes_bottom_up"] = ["filled", "filled", "overhang"]
+            modular["template"]["width"] = 11
+            path.write_text(json.dumps(modular), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_spin_setup(path)
+
+    def test_generated_opening_mirrors_scripted_pieces_and_garbage(self):
+        config = t.EngineConfig()
+        config.width, config.height = 10, 40
+        game = t.Engine(config)
+        pattern = [[t.Cell.Garbage, t.Cell.Empty, t.Cell.Empty]]
+        pieces = [t.PieceType.S, t.PieceType.Z, t.PieceType.J,
+                  t.PieceType.L, t.PieceType.I, t.PieceType.O, t.PieceType.T]
+        transforms = set()
+        changing_holes = False
+        for seed in range(50):
+            game.reset(seed)
+            transform = game.generate_opening(
+                pattern, [False], 2, 3, seed, pieces, t.PieceType.J)
+            transforms.add((transform.offset, transform.mirrored))
+            board = game.board.render()
+            clean_holes = [[col for col, cell in enumerate(board[row])
+                            if cell == t.Cell.Empty] for row in range(2)]
+            self.assertEqual(len(clean_holes[0]), 1)
+            self.assertEqual(clean_holes[0], clean_holes[1])
+            cheese_holes = [[col for col, cell in enumerate(board[row])
+                             if cell == t.Cell.Empty] for row in range(2, 5)]
+            self.assertTrue(all(len(holes) == 1 for holes in cheese_holes))
+            changing_holes |= len({holes[0] for holes in cheese_holes}) > 1
+            self.assertEqual(
+                [int(cell) for cell in board[5]],
+                [int(t.Cell.Garbage) if col == transform.offset + (
+                    2 if transform.mirrored else 0) else int(t.Cell.Empty)
+                 for col in range(10)])
+            self.assertTrue(all(cell == t.Cell.Empty for row in board[6:]
+                                for cell in row))
+            mirror = {t.PieceType.S: t.PieceType.Z,
+                      t.PieceType.Z: t.PieceType.S,
+                      t.PieceType.J: t.PieceType.L,
+                      t.PieceType.L: t.PieceType.J}
+            expected = [mirror.get(piece, piece) if transform.mirrored else piece
+                        for piece in pieces]
+            self.assertEqual(game.preview_queue()[:5], expected[:5])
+            self.assertEqual(
+                game.hold_piece, t.PieceType.L if transform.mirrored else t.PieceType.J)
+            self.assertTrue(game.spawn_next_piece())
+            self.assertEqual(game.active_piece.piece.type, expected[0])
+            self.assertEqual(game.preview_queue()[:5], expected[1:6])
+            game.reset(seed)
+            again = game.generate_opening(
+                pattern, [False], 2, 3, seed, pieces, t.PieceType.J)
+            self.assertEqual((again.offset, again.mirrored),
+                             (transform.offset, transform.mirrored))
+            self.assertEqual(game.board.render(), board)
+        self.assertEqual({mirror for _, mirror in transforms}, {False, True})
+        self.assertGreater(len({offset for offset, _ in transforms}), 1)
+        self.assertTrue(changing_holes)
+
+        game.reset(0)
+        with self.assertRaisesRegex(ValueError, "visible"):
+            game.generate_opening([[t.Cell.Empty]], [False], 20, 0, 0)
+        self.assertEqual(game.board.max_height(), 0)
+        with self.assertRaisesRegex(ValueError, "visible"):
+            game.generate_opening([[t.Cell.Empty, t.Cell.Empty]], [], 0, 0, 0)
+        self.assertEqual(game.board.max_height(), 0)
+        game.generate_opening([], [], 1, 0, 0)
+        with self.assertRaisesRegex(RuntimeError, "after reset"):
+            game.generate_opening([], [], 1, 0, 0)
+
+    def test_environment_selects_spin_and_garbage_on_python_side(self):
+        from spin_setup import SpinSetup
+
+        notebook = ast.parse((Path(__file__).resolve().parents[2] /
+                              "tetris_ai/train.py").read_text())
+        cell = next(node for node in notebook.body
+                    if isinstance(node, ast.FunctionDef) and
+                    any(isinstance(child, ast.ClassDef) and
+                        child.name == "PlacementEnv" for child in node.body))
+        classes = [child for child in cell.body
+                   if isinstance(child, ast.ClassDef) and
+                   child.name in ("EnvCheckpoint", "PlacementEnv")]
+        namespace = {
+            "tetris_py": t, "dataclass": dataclass,
+            "BOARD_WIDTH": 10, "BOARD_HEIGHT": 40, "PREVIEW_COUNT": 5,
+        }
+        exec(compile(ast.Module(body=classes, type_ignores=[]),
+                     "train.py", "exec"), namespace)
+        Env = namespace["PlacementEnv"]
+        setup = SpinSetup(("X..", "G.."), ("overhang", "filled"),
+                          "J", "S", "ZL")
+        env = Env(spin_setups=(setup,), spin_chance=0.5,
+                  clean_garbage_layers=(1, 2),
+                  cheese_garbage_layers=(1, 3))
+        selected = set()
+        cheese_counts = set()
+        for seed in range(40):
+            rng = random.Random(seed ^ 0xA0761D6478BD642F)
+            has_spin = rng.random() < 0.5
+            if has_spin:
+                rng.choice((setup,))
+            clean, cheese = rng.randint(1, 2), rng.randint(1, 3)
+            selected.add(has_spin)
+            cheese_counts.add(cheese)
+            obs = env.reset(seed)
+            self.assertEqual(obs, env.reset(seed))
+            self.assertTrue(all(row.count(int(t.Cell.Empty)) == 1
+                                for row in obs["board"][:clean + cheese]))
+            if has_spin:
+                rendered, _, mirrored = setup.render(
+                    seed, clean_garbage_layers=clean,
+                    cheese_garbage_layers=cheese)
+                self.assertEqual(obs["board"], tuple(
+                    tuple(".IOTSZJLGX".index(cell) for cell in row)
+                    for row in rendered))
+                self.assertEqual(obs["active_piece"],
+                                 int(t.PieceType.L if mirrored else t.PieceType.J))
+                self.assertEqual(obs["hold_piece"],
+                                 int(t.PieceType.Z if mirrored else t.PieceType.S))
+                self.assertEqual(obs["preview"][:2], (
+                    int(t.PieceType.S if mirrored else t.PieceType.Z),
+                    int(t.PieceType.J if mirrored else t.PieceType.L)))
+            else:
+                self.assertIsNone(obs["hold_piece"])
+                self.assertTrue(all(cell != int(t.Cell.Unclearable)
+                                    for row in obs["board"] for cell in row))
+                self.assertTrue(all(cell == int(t.Cell.Empty)
+                                    for row in obs["board"][clean + cheese:]
+                                    for cell in row))
+        self.assertEqual(selected, {False, True})
+        self.assertGreater(len(cheese_counts), 1)
+        forced_spin = env.reset(42, top_is_spin=True)
+        self.assertEqual(sum(cell == int(t.Cell.Unclearable)
+                             for row in forced_spin["board"] for cell in row), 1)
+        forced_garbage = env.reset(42, top_is_spin=False)
+        self.assertEqual(sum(cell == int(t.Cell.Unclearable)
+                             for row in forced_garbage["board"] for cell in row), 0)
+        other = SpinSetup(("..X",), ("overhang",), "I", None, "")
+        candidates = Env(spin_setups=(setup, other), spin_chance=1)
+        chosen = set()
+        for seed in range(30):
+            rng = random.Random(seed ^ 0xA0761D6478BD642F)
+            rng.random()  # Spin-chance draw precedes template selection.
+            expected = rng.choice((setup, other))
+            chosen.add(expected.active_piece)
+            opening = candidates.reset(seed)
+            rendered, _, mirrored = expected.render(seed)
+            self.assertEqual(opening["board"], tuple(
+                tuple(".IOTSZJLGX".index(cell) for cell in row)
+                for row in rendered))
+            active = ("L" if mirrored else "J") if expected is setup else "I"
+            self.assertEqual(
+                opening["active_piece"], int(t.PieceType.__members__[active]))
+        self.assertEqual(chosen, {"I", "J"})
+        with self.assertRaisesRegex(ValueError, "top_is_spin"):
+            env.reset(42, spin_setup=setup, top_is_spin=False)
+        self.assertTrue(env.done)
+        with self.assertRaises(ValueError):
+            Env(spin_chance=1)
+        with self.assertRaises(ValueError):
+            Env(cheese_garbage_layers=(3, 2))
+        with self.assertRaises(ValueError):
+            Env(spin_setups=(SpinSetup(("." * 10,) * 20,
+                                      ("overhang",) * 20, "T", None, ""),),
+                spin_chance=1, clean_garbage_layers=1).reset(42)
+
     def test_2009_guideline_profile(self):
         cfg = t.EngineConfig()
         cfg.guideline_2009 = True

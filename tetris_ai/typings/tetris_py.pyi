@@ -856,6 +856,13 @@ class TickResult:
     @property
     def moved_down(self) -> bool:
         ...
+class OpeningTransform:
+    @property
+    def offset(self) -> int:
+        ...
+    @property
+    def mirrored(self) -> bool:
+        ...
 class Engine:
     """
     Headless engine. Call reset(seed) and spawn_next_piece(); locks do not spawn.
@@ -877,6 +884,11 @@ class Engine:
     def generate_hold_piece_placement(self) -> list[Placement]:
         """
         Reachable hard-drop placements after hold.
+        """
+    def generate_opening(self, pattern: collections.abc.Sequence[collections.abc.Sequence[Cell]], filled_rows: collections.abc.Sequence[bool], clean_garbage_layers: typing.SupportsInt | typing.SupportsIndex, cheese_garbage_layers: typing.SupportsInt | typing.SupportsIndex, seed: typing.SupportsInt | typing.SupportsIndex, pieces: collections.abc.Sequence[PieceType] = ..., hold: PieceType | None = None, allow_mirror: bool = True) -> OpeningTransform:
+        """
+        Generate the selected opening after reset and before spawning. Mirrored
+        templates also mirror scripted S/Z and J/L pieces.
         """
     def hard_drop(self) -> LockResult:
         ...
@@ -924,6 +936,10 @@ class Engine:
         ...
     def set_lock_delay(self, ticks: typing.SupportsInt | typing.SupportsIndex, reset_limit: typing.SupportsInt | typing.SupportsIndex = 15) -> None:
         ...
+    def set_opening_pieces(self, pieces: collections.abc.Sequence[PieceType], hold: PieceType | None = None) -> None:
+        """
+        Set scripted active/next pieces and optional hold before spawning. The seeded bag resumes when the sequence is exhausted.
+        """
     def spawn_next_piece(self, clutch_clear: bool = False) -> bool:
         ...
     def tick(self) -> TickResult:

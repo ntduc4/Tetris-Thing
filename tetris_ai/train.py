@@ -10,8 +10,17 @@ def _():
     import numpy as np
     from torch import torch, nn
     import tetris_py
+    from spin_setup import load_spin_setup
 
-    return mo, nn, np, tetris_py, torch
+    return load_spin_setup, mo, nn, np, tetris_py, torch
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Training environment
+    """)
+    return
 
 
 @app.cell
@@ -42,9 +51,38 @@ def _(tetris_py, torch):
         are for branching/rollouts, not for leaking unrevealed future pieces.
         """
 
-        def __init__(self, piece_cap=500):
+        def __init__(self, piece_cap=500, *, spin_setups=(), spin_chance=0.0,
+                     clean_garbage_layers=(0, 0), cheese_garbage_layers=(0, 0)):
             if not isinstance(piece_cap, int) or piece_cap < 1:
                 raise ValueError("piece_cap must be a positive integer")
+            import math
+            from spin_setup import SpinSetup
+
+            def layer_range(value, name):
+                if type(value) is int:
+                    value = (value, value)
+                if (not isinstance(value, tuple) or len(value) != 2 or
+                        any(type(count) is not int for count in value) or
+                        not 0 <= value[0] <= value[1] <= 20):
+                    raise ValueError(f"{name} must be 0..20 or a (min, max) range")
+                return value
+
+            if isinstance(spin_setups, SpinSetup):
+                spin_setups = (spin_setups,)
+            self.spin_setups = tuple(spin_setups)
+            if any(not isinstance(setup, SpinSetup) for setup in self.spin_setups):
+                raise TypeError("spin_setups must contain loaded SpinSetup templates")
+            if (isinstance(spin_chance, bool) or
+                    not isinstance(spin_chance, (int, float)) or
+                    not math.isfinite(spin_chance) or not 0 <= spin_chance <= 1):
+                raise ValueError("spin_chance must be between 0 and 1")
+            if spin_chance and not self.spin_setups:
+                raise ValueError("spin_chance requires at least one spin setup")
+            self.spin_chance = spin_chance
+            self.clean_garbage_layers = layer_range(
+                clean_garbage_layers, "clean_garbage_layers")
+            self.cheese_garbage_layers = layer_range(
+                cheese_garbage_layers, "cheese_garbage_layers")
             config = tetris_py.EngineConfig()
             config.width = BOARD_WIDTH
             config.height = BOARD_HEIGHT
@@ -63,16 +101,50 @@ def _(tetris_py, torch):
             self.done = True
             self._actions = None
 
-        def reset(self, seed):
+        def reset(self, seed, spin_setup=None, *, top_is_spin=None):
             if not isinstance(seed, int) or not 0 <= seed < 2**64:
                 raise ValueError("seed must be an unsigned 64-bit integer")
-            self._seed = seed
+            self._seed = None
             self.pieces_placed = 0
-            self.done = False
+            self.done = True
             self._actions = None
-            self._engine.reset(seed)
-            if not self._engine.spawn_next_piece():
-                raise RuntimeError("Could not spawn the first piece")
+            import random
+            from spin_setup import SpinSetup
+
+            if spin_setup is not None and not isinstance(spin_setup, SpinSetup):
+                raise TypeError("Use load_spin_setup(path) for a Qt spin setup")
+            if top_is_spin is not None and type(top_is_spin) is not bool:
+                raise TypeError("top_is_spin must be True, False or None")
+            if spin_setup is not None and top_is_spin is False:
+                raise ValueError("Cannot request a spin setup with top_is_spin=False")
+            rng = random.Random(seed ^ 0xA0761D6478BD642F)
+            use_spin = (top_is_spin if top_is_spin is not None else
+                        spin_setup is not None or
+                        (bool(self.spin_setups) and rng.random() < self.spin_chance))
+            if use_spin and spin_setup is None:
+                if not self.spin_setups:
+                    raise ValueError("top_is_spin=True requires spin_setups or spin_setup")
+                spin_setup = rng.choice(self.spin_setups)
+            clean = rng.randint(*self.clean_garbage_layers)
+            cheese = rng.randint(*self.cheese_garbage_layers)
+            height = spin_setup.height if use_spin else 0
+            if clean + cheese + height > 20:
+                raise ValueError("Opening template and garbage exceed 20 visible rows")
+            if not use_spin and not clean and not cheese:
+                self._engine.reset(seed)
+                if not self._engine.spawn_next_piece():
+                    raise RuntimeError("Could not spawn the first piece")
+            elif use_spin:
+                spin_setup.apply(self._engine, seed, tetris_py,
+                                 clean_garbage_layers=clean,
+                                 cheese_garbage_layers=cheese)
+            else:
+                self._engine.reset(seed)
+                self._engine.generate_opening([], [], clean, cheese, seed)
+                if not self._engine.spawn_next_piece():
+                    raise RuntimeError("Could not spawn the first piece")
+            self._seed = seed
+            self.done = False
             return self.observe()
 
         def checkpoint(self):
@@ -209,6 +281,73 @@ def _(tetris_py, torch):
     available_placements = env.legal_placements()
     (device, len(initial_observation["board"]), len(available_placements))
     return PREVIEW_COUNT, PlacementEnv, available_placements, device, env
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ## Preview a Qt spin setup (no training)
+
+    Use **Spin setup…** in the Qt app to draw a small bottom-anchored template
+    with filled/overhang rows and save JSON. Paste its path below to load an
+    independent `PlacementEnv` opening. Each reset chooses a seeded horizontal
+    offset and mirror; S/Z and J/L scripted pieces mirror with the drawing,
+    then the seeded 7-bag resumes. `PlacementEnv(spin_setups=(...), spin_chance=...,
+    clean_garbage_layers=(min, max), cheese_garbage_layers=(min, max))` chooses
+    the opening per seed; `reset(seed, top_is_spin=True/False)` can override it.
+    Garbage sits below any selected spin template. Normal training and
+    evaluation remain unchanged until explicitly configured.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    spin_setup_path = mo.ui.text(label="Spin setup JSON path")
+    spin_setup_seed = mo.ui.number(start=0, stop=2**31 - 1, value=42,
+                                    label="Opening / bag seed")
+    load_spin_button = mo.ui.run_button(label="Load spin setup")
+    mo.hstack([spin_setup_path, spin_setup_seed, load_spin_button])
+    return load_spin_button, spin_setup_path, spin_setup_seed
+
+
+@app.cell
+def _(
+    PlacementEnv,
+    load_spin_button,
+    load_spin_setup,
+    mo,
+    spin_setup_path,
+    spin_setup_seed,
+    tetris_py,
+):
+    if not load_spin_button.value:
+        _setup_view = mo.md("Choose a saved JSON setup and click **Load spin setup**.")
+    else:
+        _setup = load_spin_setup(spin_setup_path.value)
+        _spin_env = PlacementEnv()
+        _full_board, _offset, _mirrored = _setup.render(int(spin_setup_seed.value))
+        _observation = _spin_env.reset(
+            int(spin_setup_seed.value), spin_setup=_setup)
+        _actions = _spin_env.legal_placements()
+        _board = "\n".join(
+            f"{row:02d} " + "".join(".IOTSZJLGX"[cell] for cell in _observation["board"][row])
+            for row in range(19, -1, -1)
+        )
+        _name = lambda p: "Empty" if p is None else "IOTSZJL"[p]
+        _setup_view = mo.md(
+            f"**Template x:** {_offset}; **mirrored:** {_mirrored}. "
+            f"**Active:** {_name(_observation['active_piece'])}; "
+            f"**hold:** {_name(_observation['hold_piece'])}; "
+            f"**next:** {''.join(_name(p) for p in _observation['preview'])}. "
+            f"**Reachable placements:** {len(_actions)}, "
+            f"including {sum(a.spin != tetris_py.SpinType.None_ for a in _actions)} "
+            "spin-classified actions. These are candidate placements, not "
+            "a claim that a spin line clear occurred.\n\n"
+            f"```text\n{_board}\n```"
+        )
+    _setup_view
+    return
 
 
 @app.cell
@@ -757,14 +896,14 @@ def _(
             current_features, _ = pending[0]
             current_batch = torch.as_tensor(current_features, dtype=torch.float32, device=device).unsqueeze(0)
             prediction = q_online(current_batch)[0]
-        
+
             loss = F.smooth_l1_loss(prediction, target)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
             pending.popleft()
 
-    
+
         while True:
             action = get_action_random(training_env, observation, q_online, epsilon) if explore_random else get_action_expert(training_env, observation, q_online, epsilon)
             next_observation, reward, terminated, truncated, info = training_env.step(action)
@@ -1060,7 +1199,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    N_EPISODES = 31600
+    N_EPISODES = 31400
     q_train_button = mo.ui.run_button(label=f"Train Q-learning ({N_EPISODES} episodes)")
     mc_train_button = mo.ui.run_button(label=f"Train Monte carlo ({N_EPISODES} episodes)")
     bc_train_button = mo.ui.run_button(

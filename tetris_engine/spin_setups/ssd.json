@@ -1,0 +1,20 @@
+{
+    "active_piece": "S",
+    "height": 40,
+    "hold_piece": null,
+    "next_pieces": "",
+    "template": {
+        "height": 2,
+        "row_modes_bottom_up": [
+            "filled",
+            "filled"
+        ],
+        "rows_bottom_up": [
+            "..G",
+            "G.."
+        ],
+        "width": 3
+    },
+    "version": 2,
+    "width": 10
+}

@@ -1,5 +1,6 @@
 #include "MainWindow.hpp"
 #include "RulesDialog.hpp"
+#include "SpinSetupDialog.hpp"
 
 #include "bot/MisaMinoBot.hpp"
 
@@ -274,6 +275,9 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
   auto *keys = new QPushButton("Keybinds…", this);
   keys->setObjectName("keybinds");
   menu->addWidget(keys);
+  auto *spin_setup = new QPushButton("Spin setup…", this);
+  spin_setup->setObjectName("spinSetup");
+  menu->addWidget(spin_setup);
   auto *start = new QPushButton("Restart", this);
   start->setObjectName("restart");
   menu->addWidget(start);
@@ -353,7 +357,7 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
   help->setWordWrap(true);
   outer->addWidget(help);
 
-  for (auto *button : {_rules, keys, start, _next, _edit})
+  for (auto *button : {_rules, keys, spin_setup, start, _next, _edit})
     button->setFocusPolicy(Qt::NoFocus);
   connect(_mode, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
           [this] { restart(); });
@@ -370,6 +374,16 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
   connect(_next, &QPushButton::clicked, this, [this] { next_round(); });
   connect(_rules, &QPushButton::clicked, this, [this] { open_rules(); });
   connect(keys, &QPushButton::clicked, this, [this] { open_bindings(); });
+  connect(spin_setup, &QPushButton::clicked, this, [this] {
+    _timer->stop();
+    clear_keys();
+    SpinSetupDialog dialog(this);
+    dialog.exec();
+    _last_frame = std::chrono::steady_clock::now();
+    _accumulated = std::chrono::nanoseconds{};
+    _timer->start();
+    setFocus();
+  });
   connect(_edit, &QPushButton::clicked, this, [this] { toggle_edit(); });
   connect(_palette, QOverload<int>::of(&QComboBox::activated), this,
           [this] { setFocus(); });

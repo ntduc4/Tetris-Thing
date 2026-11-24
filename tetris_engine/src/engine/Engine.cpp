@@ -75,6 +75,7 @@ Engine Engine::clone() const {
               _lock_delay, _guideline_2009);
   copy._active_piece = _active_piece;
   copy._hold_piece = _hold_piece;
+  copy._opening_pieces = _opening_pieces;
   copy._game_over = _game_over;
   copy._can_hold = _can_hold;
   copy._lines_cleared = _lines_cleared;
@@ -119,6 +120,7 @@ void Engine::restore(const Engine &snapshot) {
   _board = snapshot._board;
   _active_piece = snapshot._active_piece;
   _hold_piece = snapshot._hold_piece;
+  _opening_pieces = snapshot._opening_pieces;
   _game_over = snapshot._game_over;
   _can_hold = snapshot._can_hold;
   _lines_cleared = snapshot._lines_cleared;
@@ -165,6 +167,7 @@ void Engine::reset(uint64_t seed) {
   _game_over = false;
   _active_piece = std::nullopt;
   _hold_piece = std::nullopt;
+  _opening_pieces.clear();
   _spin_context = {};
   _lowest_row_reached = 0;
   _has_landed = false;
@@ -292,14 +295,55 @@ ActivePiece Engine::spawn_piece(PieceType type) const {
 }
 
 std::vector<PieceType> Engine::preview_queue() const {
-  return _randomizer->preview(_preview_count);
+  if (_opening_pieces.empty())
+    return _randomizer->preview(_preview_count);
+  std::vector<PieceType> preview;
+  preview.reserve(_preview_count);
+  for (PieceType piece : _opening_pieces) {
+    if (preview.size() == _preview_count) break;
+    preview.push_back(piece);
+  }
+  if (preview.size() < _preview_count) {
+    const auto fallback = _randomizer->preview(
+        static_cast<uint8_t>(_preview_count - preview.size()));
+    preview.insert(preview.end(), fallback.begin(), fallback.end());
+  }
+  return preview;
+}
+
+void Engine::set_opening_pieces(const std::vector<PieceType> &pieces,
+                                std::optional<PieceType> hold) {
+  if (_active_piece || _game_over || _last_lock_result || _tick_count ||
+      _score || _edit_mode)
+    throw std::logic_error("opening pieces must be set after reset, before spawning");
+  if (pieces.empty() || pieces.size() > 64)
+    throw std::invalid_argument("opening requires 1..64 active/next pieces");
+  auto valid = [](PieceType piece) {
+    return static_cast<unsigned>(piece) <= static_cast<unsigned>(PieceType::L);
+  };
+  if (!std::all_of(pieces.begin(), pieces.end(), valid) || (hold && !valid(*hold)))
+    throw std::invalid_argument("opening contains an invalid piece type");
+  _opening_pieces.assign(pieces.begin(), pieces.end());
+  _hold_piece = hold;
+  _can_hold = true;
+}
+
+PieceType Engine::next_piece() const {
+  return _opening_pieces.empty() ? _randomizer->peek() : _opening_pieces.front();
+}
+
+void Engine::consume_next_piece() {
+  if (_opening_pieces.empty())
+    _randomizer->pop();
+  else
+    _opening_pieces.pop_front();
 }
 
 bool Engine::spawn_next_piece(bool clutch_clear) {
   if (_game_over || _edit_mode || _active_piece)
     return false;
 
-  ActivePiece nextPiece = spawn_piece(_randomizer->peek());
+  ActivePiece nextPiece = spawn_piece(next_piece());
 
   if (_board.collide(nextPiece)) {
     if (_guideline_2009) {
@@ -315,7 +359,7 @@ bool Engine::spawn_next_piece(bool clutch_clear) {
     while (nextPiece.pos.row + PieceDimension < _board.get_height()) {
       nextPiece.pos.row++;
       if (!_board.collide(nextPiece)) {
-        _randomizer->pop();
+        consume_next_piece();
         _active_piece = nextPiece;
         _lowest_row_reached = nextPiece.pos.row;
         _has_landed = _board.grounded(nextPiece);
@@ -340,7 +384,7 @@ bool Engine::spawn_next_piece(bool clutch_clear) {
     if (!_board.collide(down))
       nextPiece = down;
   }
-  _randomizer->pop();
+  consume_next_piece();
   _active_piece = nextPiece;
   _lowest_row_reached = nextPiece.pos.row;
   _has_landed = _board.grounded(nextPiece);
@@ -361,7 +405,7 @@ bool Engine::hold(bool ignore_hold) {
     return false;
 
   if (!_hold_piece.has_value()) {
-    ActivePiece next = spawn_piece(_randomizer->peek());
+    ActivePiece next = spawn_piece(next_piece());
     if (_board.collide(next)) {
       if (_guideline_2009)
         _game_over = true;
@@ -374,7 +418,7 @@ bool Engine::hold(bool ignore_hold) {
         next = down;
     }
     _hold_piece = _active_piece->piece.type();
-    _randomizer->pop();
+    consume_next_piece();
     _active_piece = next;
   } else {
     ActivePiece nextPiece = spawn_piece(_hold_piece.value());
@@ -1030,6 +1074,8 @@ LockResult Engine::apply_placement(const Placement &placement) {
   // without cloning the rules or the board on every placement.
   const auto active = _active_piece;
   const auto held = _hold_piece;
+  const auto opening_before = placement.use_hold ? _opening_pieces :
+                                                   std::deque<PieceType>{};
   const bool game_over_before = _game_over;
   const bool can_hold_before = _can_hold;
   const auto spin = _spin_context;
@@ -1049,6 +1095,8 @@ LockResult Engine::apply_placement(const Placement &placement) {
   auto rollback = [&] {
     _active_piece = active;
     _hold_piece = held;
+    if (placement.use_hold)
+      _opening_pieces = opening_before;
     _game_over = game_over_before;
     _can_hold = can_hold_before;
     _spin_context = spin;
