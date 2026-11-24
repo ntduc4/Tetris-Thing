@@ -40,11 +40,21 @@ void Match::deliver(size_t sender, uint16_t lines) {
   if (lines == 0)
     return;
   auto send_to = [&](size_t target) {
+    if (_players[target]->guideline_2009()) {
+      _players[target]->receive_random_garbage(lines);
+      return;
+    }
     const uint16_t width = _players[target]->board().get_width();
     uint16_t hole = std::uniform_int_distribution<uint16_t>(0, width - 1)(
         _garbage_rng[target]);
     _players[target]->receive_garbage(lines, hole);
   };
+  if (_players[sender]->guideline_2009() && !_targets[sender]) {
+    for (size_t target = 0; target < _players.size(); ++target)
+      if (target != sender && !_players[target]->game_over())
+        send_to(target);
+    return;
+  }
   if (_targets[sender] && !_players[*_targets[sender]]->game_over()) {
     send_to(*_targets[sender]);
     return;
@@ -67,8 +77,11 @@ std::vector<TickResult> Match::tick() {
   results.reserve(_players.size());
   for (auto &player : _players) {
     TickResult result = player->tick();
-    if (result.locked && !player->game_over())
+    if (result.locked && !player->game_over()) {
       player->spawn_next_piece();
+      if (player->guideline_2009())
+        result.game_over = player->game_over();
+    }
     results.push_back(result);
   }
   for (size_t i = 0; i < results.size(); ++i)
@@ -96,8 +109,11 @@ LockResult Match::apply_placement(size_t index, const Placement &placement) {
 
 LockResult Match::finish_lock(size_t index, LockResult result) {
   if (result.locked) {
-    if (!player(index).game_over())
+    if (!player(index).game_over()) {
       player(index).spawn_next_piece();
+      if (player(index).guideline_2009())
+        result.game_over = player(index).game_over();
+    }
     for (uint16_t packet : result.attack_packets)
       deliver(index, packet);
     check_winner();

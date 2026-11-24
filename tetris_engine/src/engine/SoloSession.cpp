@@ -4,7 +4,11 @@
 
 namespace tetris {
 void SoloSession::start(uint64_t seed) {
+  if (!_started && _engine.guideline_2009())
+    _guideline_start_level = _engine.level();
   _engine.reset(seed);
+  if (_engine.guideline_2009())
+    _engine.set_level(_guideline_start_level);
   _started = true;
   _finished = false;
   _engine.spawn_next_piece();
@@ -12,7 +16,17 @@ void SoloSession::start(uint64_t seed) {
 }
 
 void SoloSession::check_finished() {
+  if (_engine.guideline_2009() && _settings.mode == SoloMode::Marathon &&
+      !_engine.game_over()) {
+    // The fixed-goal 2009 Marathon advances every ten cleared lines through
+    // level 15. Starting above level 1 still uses the cumulative threshold.
+    while (_engine.level() < 15 &&
+           _engine.lines_cleared() >= 10u * _engine.level())
+      _engine.set_level(_engine.level() + 1);
+  }
   if (_engine.game_over() ||
+      (_engine.guideline_2009() && _settings.mode == SoloMode::Marathon &&
+       _engine.level() == 15 && _engine.lines_cleared() >= 150) ||
       (_settings.mode == SoloMode::Sprint &&
        _engine.lines_cleared() >= _settings.line_goal) ||
       (_settings.mode == SoloMode::Blitz &&

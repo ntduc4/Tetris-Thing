@@ -20,6 +20,8 @@ public:
                                            Rotation to) const = 0;
   /** A ruleset can disable all rotation, including in-place rotation. */
   virtual bool allows_rotation() const { return true; }
+  /** The 2009 Guideline only provides 90-degree rotations. */
+  virtual bool allows_half_turn() const { return true; }
   virtual std::unique_ptr<RotationSystem> clone() const {
     throw std::logic_error("rotation system does not support cloning");
   }
@@ -44,6 +46,17 @@ public:
                                     Rotation to) const override;
   std::unique_ptr<RotationSystem> clone() const override {
     return std::make_unique<SRSX>(*this);
+  }
+};
+
+/** 2009 Guideline SRS: ordered five-point 90-degree kicks, no 180 input. */
+class GuidelineSRS : public RotationSystem {
+public:
+  std::vector<Offset> kick_offsets(PieceType piece, Rotation from,
+                                   Rotation to) const override;
+  bool allows_half_turn() const override { return false; }
+  std::unique_ptr<RotationSystem> clone() const override {
+    return std::make_unique<GuidelineSRS>(*this);
   }
 };
 

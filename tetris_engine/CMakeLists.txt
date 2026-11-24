@@ -98,6 +98,8 @@ endif()
 enable_testing()
 
 add_test(NAME tetris_cli_srs_x_smoke COMMAND tetris_cli --ticks 30 --rotation srs-x)
+add_test(NAME tetris_cli_guideline_2009_smoke
+         COMMAND tetris_cli --ticks 30 --ruleset guideline-2009)
 
 add_executable(tetris_core_board_tests tests/core/board_tests.cpp)
 target_link_libraries(tetris_core_board_tests PRIVATE tetris_engine)
@@ -153,6 +155,11 @@ target_link_libraries(tetris_engine_gameplay_spec_tests PRIVATE tetris_engine)
 target_include_directories(tetris_engine_gameplay_spec_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_test(NAME tetris_engine_gameplay_spec_tests COMMAND tetris_engine_gameplay_spec_tests)
 
+add_executable(tetris_engine_guideline_2009_tests tests/engine/guideline_2009_tests.cpp)
+target_link_libraries(tetris_engine_guideline_2009_tests PRIVATE tetris_engine)
+target_include_directories(tetris_engine_guideline_2009_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+add_test(NAME tetris_engine_guideline_2009_tests COMMAND tetris_engine_guideline_2009_tests)
+
 add_executable(tetris_engine_rotation_variants_tests tests/engine/rotation_variants_tests.cpp)
 target_link_libraries(tetris_engine_rotation_variants_tests PRIVATE tetris_engine)
 target_include_directories(tetris_engine_rotation_variants_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
@@ -175,6 +182,11 @@ if(TARGET tetris_qt_widgets)
         target_link_libraries(tetris_qt_app_tests PRIVATE tetris_qt_widgets Qt6::Test)
         add_test(NAME tetris_qt_app_tests COMMAND tetris_qt_app_tests)
         set_tests_properties(tetris_qt_app_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+        add_executable(tetris_qt_controls_tests tests/qt_controls_tests.cpp)
+        target_link_libraries(tetris_qt_controls_tests PRIVATE tetris_qt_widgets Qt6::Test)
+        add_test(NAME tetris_qt_controls_tests COMMAND tetris_qt_controls_tests)
+        set_tests_properties(tetris_qt_controls_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
         find_package(Python3 QUIET COMPONENTS Interpreter)
         if(Python3_Interpreter_FOUND)
             add_executable(tetris_model_match_tests tests/model_match_tests.cpp)

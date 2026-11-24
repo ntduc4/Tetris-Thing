@@ -2,7 +2,9 @@
 
 import ast
 import copy
+from html import escape
 import json
+import math
 import os
 import pathlib
 from pathlib import Path
@@ -10,6 +12,7 @@ import re
 import tempfile
 from types import SimpleNamespace
 import unittest
+from xml.etree import ElementTree
 
 import numpy as np
 import torch
@@ -103,6 +106,75 @@ class ConstantModel(torch.nn.Module):
 
 
 class TrainingEvaluationTests(unittest.TestCase):
+    def test_training_charts_use_round_y_axis_intervals(self):
+        chart = notebook_helper("evaluation_chart", {
+            "escape": escape, "math": math,
+        })
+        examples = (
+            (42_814, "count", 1, ["0", "10,000", "20,000", "30,000",
+                                   "40,000", "50,000"]),
+            (51_200, "count", 1, ["0", "10,000", "20,000", "30,000",
+                                   "40,000", "50,000", "60,000"]),
+            (500, "count", 1, ["0", "100", "200", "300", "400", "500"]),
+            (196, "count", 1, ["0", "50", "100", "150", "200"]),
+            (39, "count", 1, ["0", "10", "20", "30", "40"]),
+            (2, "count", 1, ["0.0", "0.5", "1.0", "1.5", "2.0"]),
+            (0, "count", 1, ["0", "1", "2", "3", "4"]),
+            (0.392, "ratio", 1, ["0.00", "0.10", "0.20", "0.30", "0.40"]),
+            (1, "percent", 100, ["0%", "20%", "40%", "60%", "80%", "100%"]),
+        )
+        for maximum, tick_format, scale, expected in examples:
+            with self.subTest(maximum=maximum, tick_format=tick_format):
+                svg = chart([{"episodes_trained": 100, "value": maximum}],
+                            "Metric", "value", tick_format, scale)
+                root = ElementTree.fromstring(svg)
+                labels = [
+                    text.text for text in root.findall("text")
+                    if text.get("text-anchor") == "end"
+                ]
+                self.assertEqual(labels, expected)
+
+    def test_training_charts_use_even_episode_ticks(self):
+        chart = notebook_helper("evaluation_chart", {
+            "escape": escape, "math": math,
+        })
+        examples = (
+            ([100, 1200, 5100, 51100, 51200],
+             [0, 10000, 20000, 30000, 40000, 50000, 60000]),
+            ([10300, 12000, 20200],
+             [10000, 12000, 14000, 16000, 18000, 20000, 22000]),
+            ([100, 500], [100, 200, 300, 400, 500]),
+            ([100], [100]),
+        )
+        for episodes, expected in examples:
+            with self.subTest(episodes=episodes):
+                records = [
+                    {"episodes_trained": episode, "value": index + 1}
+                    for index, episode in enumerate(episodes)
+                ]
+                root = ElementTree.fromstring(
+                    chart(records, "Metric", "value")
+                )
+                ticks = [
+                    text for text in root.findall("text")
+                    if text.get("y") == "238"
+                ]
+                self.assertEqual(
+                    [int(text.text.replace(",", "")) for text in ticks], expected
+                )
+                gridlines = [
+                    line for line in root.findall("line")
+                    if line.get("x1") == line.get("x2")
+                ]
+                self.assertEqual(len(gridlines), len(ticks))
+                positions = [float(text.get("x")) for text in ticks]
+                if len(positions) > 2:
+                    spacing = [
+                        second - first
+                        for first, second in zip(positions, positions[1:])
+                    ]
+                    self.assertLess(max(spacing) - min(spacing), 0.2)
+
     def test_benchmark_is_greedy_fixed_seed_and_restores_model_mode(self):
         namespace = {
             "device": torch.device("cpu"),
@@ -367,7 +439,7 @@ class TrainingEvaluationTests(unittest.TestCase):
             paths = re.findall(r'<path d="([^"]+)"', mo.html)
             self.assertEqual(len(paths), 12)
             self.assertTrue(all(path.count(" L") == 4 for path in paths))
-            self.assertIn("51,200", mo.html)
+            self.assertIn(">60,000</text>", mo.html)
             self.assertIn("5 evaluations", mo.markdown[0])
             self.assertIn("**100** to **51,200** total episodes", mo.markdown[0])
             self.assertIn("all saved history", mo.markdown[0])

@@ -162,6 +162,16 @@ std::vector<Offset> SRSX::kick_offsets(PieceType piece, Rotation from,
   return piece == PieceType::I ? i_90_srs(from, to) : non_i_90(from, to);
 }
 
+std::vector<Offset> GuidelineSRS::kick_offsets(PieceType piece, Rotation from,
+                                               Rotation to) const {
+  if (from == to || from == Rotation::Count || to == Rotation::Count ||
+      (static_cast<unsigned>(from) + 2) % 4 == static_cast<unsigned>(to))
+    return {};
+  return piece == PieceType::I ? i_90_srs(from, to)
+       : piece == PieceType::O ? std::vector<Offset>{{0, 0}}
+                               : non_i_90(from, to);
+}
+
 SpinType TSpin::detect(const Board &board, const ActivePiece &piece,
                        const SpinContext &context) const {
   if (piece.piece.type() != PieceType::T || !is_rotation(context.last_movement))
@@ -189,6 +199,16 @@ SpinType TSpin::detect(const Board &board, const ActivePiece &piece,
                 std::abs(context.kick_offset->col) == 1))
     return SpinType::Full;
   return SpinType::Mini;
+}
+
+SpinType GuidelineTSpin::detect(const Board &board, const ActivePiece &piece,
+                                const SpinContext &context) const {
+  if (context.last_movement != Movement::CW &&
+      context.last_movement != Movement::CCW)
+    return SpinType::None;
+  const SpinType spin = TSpin{}.detect(board, piece, context);
+  return spin == SpinType::Mini && context.guideline_point_five
+             ? SpinType::Full : spin;
 }
 
 SpinType AllSpin::detect(const Board &board, const ActivePiece &piece,
@@ -222,6 +242,21 @@ uint64_t Classical::score(const ScoreEvent &event) const {
     points += _table.perfect_clear_bonus;
   return points + event.hard_drop_cells * _table.hard_drop_point +
          event.soft_drop_cells * _table.soft_drop_point;
+}
+
+uint64_t GuidelineScore::score(const ScoreEvent &event) const {
+  const size_t lines = std::min<size_t>(event.lines_cleared, 4);
+  constexpr std::array<uint64_t, 5> normal{0, 100, 300, 500, 800};
+  constexpr std::array<uint64_t, 4> full{400, 800, 1200, 1600};
+  constexpr std::array<uint64_t, 2> mini{100, 200};
+  const bool t_spin = event.spin != SpinType::None && lines <= 3;
+  uint64_t points = event.spin == SpinType::Mini && lines <= 1 ? mini[lines]
+                  : t_spin ? full[lines] : normal[lines];
+  if (event.back_to_back && lines && (t_spin || lines == 4))
+    points = points * 3 / 2;
+  return points * std::max<uint16_t>(1, event.level) +
+         uint64_t{event.soft_drop_cells} +
+         uint64_t{event.hard_drop_cells} * 2;
 }
 
 uint16_t TableAttack::garbage_to_send(const AttackContext &ctx) const {
@@ -319,17 +354,19 @@ uint16_t TetrioSS1::garbage_to_send(const AttackContext &ctx) const {
 uint16_t GuidelineAttack::garbage_to_send(const AttackContext &ctx) const {
   if (!ctx.lines_cleared)
     return 0;
-  // Guideline Standard (Tetris Online Japan) combo bonuses, additive rather
-  // than TETR.IO's multiplier; capped at +5 from combo x11 onward.
-  constexpr std::array<uint16_t, 13> combo{0, 0, 1, 1, 2, 2, 3,
-                                          3, 4, 4, 4, 5, 5};
-  uint64_t attack = standard_attack_weight(ctx);
+  constexpr std::array<uint16_t, 5> normal{0, 0, 1, 2, 4};
+  constexpr std::array<uint16_t, 4> full{0, 2, 4, 6};
+  const size_t lines = std::min<size_t>(ctx.lines_cleared, 4);
+  const bool t_spin = ctx.piece == PieceType::T &&
+                      ctx.spin != SpinType::None && lines <= 3;
+  uint64_t attack = t_spin
+      ? (ctx.spin == SpinType::Mini && lines == 1 ? 0 : full[lines])
+      : normal[lines];
+  // The 2009 counter-attack table gives a B2B mini single zero lines.
   if (ctx.back_to_back &&
-      (ctx.spin != SpinType::None || ctx.lines_cleared >= 4))
+      ((t_spin && !(ctx.spin == SpinType::Mini && lines == 1)) ||
+       lines == 4))
     ++attack;
-  attack += combo[std::min<size_t>(ctx.combo, combo.size() - 1)];
-  if (ctx.perfect_clear)
-    attack += 10;
   return capped_attack(attack);
 }
 } // namespace tetris

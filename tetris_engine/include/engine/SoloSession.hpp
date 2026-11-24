@@ -18,7 +18,8 @@ struct SoloSettings {
 class SoloSession {
 public:
   explicit SoloSession(Engine engine, SoloSettings settings = {})
-      : _engine(std::move(engine)), _settings(settings) {}
+      : _engine(std::move(engine)), _settings(settings),
+        _guideline_start_level(_engine.level()) {}
 
   void start(uint64_t seed = 0);
   TickResult tick();
@@ -34,6 +35,7 @@ private:
   void check_finished();
   Engine _engine;
   SoloSettings _settings;
+  uint16_t _guideline_start_level = 1;
   bool _started = false;
   bool _finished = false;
 };

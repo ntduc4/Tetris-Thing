@@ -218,9 +218,9 @@ void test_combo_singles_route_attack_by_rule() {
     }
   };
   play_singles(std::make_unique<TetrioSS2>(),
-               {0, 0, 1, 1, 1, 1, 2});
+                {0, 0, 1, 1, 1, 1, 2});
   play_singles(std::make_unique<GuidelineAttack>(),
-               {0, 0, 1, 1, 2, 2, 3});
+                {0, 0, 0, 0, 0, 0, 0});
 }
 
 void test_season_two_non_t_minis_keep_b2b() {

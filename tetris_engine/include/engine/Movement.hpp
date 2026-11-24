@@ -24,6 +24,8 @@ enum class Movement : uint8_t {
 struct SpinContext {
   Movement last_movement = Movement::None;
   std::optional<Offset> kick_offset = std::nullopt;
+  /** Guideline: a fifth kick promotes later uninterrupted rotations to full. */
+  bool guideline_point_five = false;
   bool operator==(const SpinContext &) const = default;
 };
 

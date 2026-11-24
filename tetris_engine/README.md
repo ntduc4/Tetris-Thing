@@ -15,6 +15,8 @@ The Qt 6 Widgets app is built when Qt 6 Widgets and Concurrent are available (`-
 
 Default P1: **A/D/S** move, **W/Q/E** rotate, **C** hold, **Space** drop. Default P2: **←/→/↓** move, **↑/J/K** rotate, **L** hold, **Enter** drop. In solo play, **F** toggles draw mode; select a cell, left-drag to paint, right-drag to erase. **Next round** continues a local match.
 
+Qt keyboard handling keeps charged left/right DAS and the ARR interval across a hard drop, natural lock, or successful hold: the next piece shifts immediately in the held direction (to the wall when ARR is zero), without waiting for DAS again. Pressing the opposite direction or releasing either of two held directions starts a fresh delay for the active direction. Soft drop remains held across pieces; rotations and hard drop do not auto-repeat. DAS/ARR are still configurable under **Rules…**; the modern-looking playfield and existing TETR.IO-style rule defaults are unchanged.
+
 In **Turn-based vs bot**, choose **MisaMino bot** or **Latest AI** from the opponent selector. P1 uses the usual keys and the opponent places exactly one piece after each P1 hard drop; neither board falls on a timer. MisaMino uses its existing C++ placement search (no Python or checkpoint required) on a selectable 40- or 10-row board. Choose the same board height as the current model checkpoint when comparing opponents; neither option fixes the known TETR.IO spawn-height difference. Matches have 10 columns, zero gravity, attacks, and wins; local room settings do not alter them. The latest AI loads `tetris_ai/checkpoints/encoding_v3/shared/latest.pt` on entry, Restart, and Next round, using the board height encoded in that checkpoint; changing the height starts a fresh match. Install the training Poetry environment (`poetry -C ../tetris_ai install --no-root` from this directory), then run `make run-qt`. AI inference runs on CPU in a separate process, using only the bot board, active/held pieces, five previews, incoming garbage total, and engine-generated legal placements. Missing or incompatible models produce an on-screen error instead of silently substituting another bot. Set `TETRIS_MODEL_PYTHON` to a Python interpreter with PyTorch and NumPy to run without Poetry; `TETRIS_MODEL_CHECKPOINT` overrides the checkpoint path.
 
 Each playfield shows an incoming-garbage meter on its left. The bar fills from the bottom to 20 lines; more than 20 lines turns it red. The status beneath the board shows the exact pending line count, including when the bar is full.
@@ -23,7 +25,9 @@ The CLI remains available: `./build/tetris_cli --help`. Use `--ticks 600` for a 
 
 The Season 2 1v1 attack rule uses [TETR.IO's multiplier](https://tetris.wiki/TETR.IO#Combo_System:_%22Multiplier%22): round down, use logarithmic combo attack for zero-base clears from combo x2, add B2B after combo scaling, and add a flat +1 for quads/spins that clear garbage. An All Clear sends an unmultiplied five-line packet in addition to its line-clear attack; surge releases in three packets. Other timing, blocking, and room details remain approximations, not verified TETR.IO parity.
 
-The former “Jstris” attack choice is now **Guideline**: a *Guideline-style attack preset* with 0/1/2/4 base clear values, the [Tetris Online Japan combo table](https://harddrop.com/wiki/Opener#Combo_Openers) (combo x0–x12: 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 4, 5, 5; capped at 5 thereafter), a +1 B2B bonus, and an additive +10 All Clear bonus. This is **not** an exact TOJ versus mode: its spin and All Clear values differ. Qt's saved numeric rule selection retains its original index.
+**Guideline** attack now follows the supplied *2009 Tetris Design Guideline*, Appendix B: normal clears send 0/1/2/4, T-spin clears send 2/4/6, and qualifying B2B attacks add one line (a mini single still sends zero). The 2009 table has no combo or all-clear attack bonus. This changes the existing Guideline attack choice; Season 1/2 and custom attacks are unchanged. Qt's saved numeric rule selection retains its original index.
+
+For the full engine-side 2009 profile, use `./build/tetris_cli --ruleset guideline-2009` (optionally `--level 1..15`), or set `EngineConfig.guideline_2009 = True` in Python. The profile requires a 10×40 board (20 visible rows and 20 buffer rows), uses a 7-bag, 1–6 previews, five-point 90° SRS without a 180 input, T-only spins, level-dependent 2009 scores, immediate post-generation descent, Block Out / Lock Out / Top Out, and extended placement lock-down. In Guideline multiplayer matches, incoming garbage counters first; remaining ready lines rise after every lock, and a new random hole is chosen after each eight lines *actually risen*. Untargeted attacks reach all opponents; `Match.set_target` selects one opponent instead. Explicit `receive_garbage(lines, hole)` still accepts a chosen hole for fixtures. Guideline Marathon in `SoloSession` uses fixed ten-line level goals through level 15; Sprint and Blitz retain their separate objectives. TETR.IO defaults and bot-training configurations do not opt into this profile. UI presentation, music, input auto-repeat, and platform-dependent generation delays/animations are not implemented by the headless engine.
 
 ## Python
 
@@ -42,6 +46,20 @@ print(game.hard_drop().attack_packets)
 game.spawn_next_piece()  # Engine does not spawn automatically after a lock.
 PY
 ```
+
+For Guideline play:
+
+```python
+cfg = t.EngineConfig()
+cfg.guideline_2009 = True
+cfg.level = 1
+game = t.Engine(cfg)
+game.reset(42)
+game.spawn_next_piece()
+```
+
+Setting `cfg.attack = t.AttackRule.Guideline` alone selects **only** the 2009
+multiplayer attack table, without replacing the other rule subsystems.
 
 `Engine` exposes actions, board/queue snapshots, garbage, and rule configuration; `SoloSession` and `Match` expose seeded starts and automatic spawns. Board row 0 is the bottom.
 

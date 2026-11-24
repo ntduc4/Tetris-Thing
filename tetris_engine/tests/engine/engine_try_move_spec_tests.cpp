@@ -123,9 +123,10 @@ bool same_optional_offset(const std::optional<tetris::Offset> &lhs,
 }
 
 bool same_spin_context(const tetris::SpinContext &lhs,
-                       const tetris::SpinContext &rhs) {
+                        const tetris::SpinContext &rhs) {
   return lhs.last_movement == rhs.last_movement &&
-         same_optional_offset(lhs.kick_offset, rhs.kick_offset);
+         same_optional_offset(lhs.kick_offset, rhs.kick_offset) &&
+         lhs.guideline_point_five == rhs.guideline_point_five;
 }
 
 bool same_pending_garbage(const std::deque<tetris::PendingGarbage> &lhs,
@@ -135,7 +136,8 @@ bool same_pending_garbage(const std::deque<tetris::PendingGarbage> &lhs,
   for (size_t i = 0; i < lhs.size(); ++i) {
     if (lhs[i].event.lines != rhs[i].event.lines ||
         lhs[i].event.hole_col != rhs[i].event.hole_col ||
-        lhs[i].delay_ticks != rhs[i].delay_ticks)
+        lhs[i].delay_ticks != rhs[i].delay_ticks ||
+        lhs[i].random_hole != rhs[i].random_hole)
       return false;
   }
   return true;

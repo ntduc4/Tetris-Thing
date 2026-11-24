@@ -187,9 +187,11 @@ def _(tetris_py, torch):
             truncated = not terminated and self.pieces_placed >= self.piece_cap
             self.done = terminated or truncated
             b2b_count = self._engine.back_to_back_count
+            height_after = self._engine.board.max_height()
             info = {
                 "lines_cleared": lock.lines_cleared,
                 "score_delta": lock.score_delta,
+                "height_delta": height_after - height_before,
                 "spin": int(lock.spin),
                 "perfect_clear": lock.perfect_clear,
                 "attack_sent": lock.attack_sent,
@@ -197,8 +199,7 @@ def _(tetris_py, torch):
                 "top_out": terminated,
                 "b2b_delta": b2b_count - pre_b2b_count
             }
-            height_after = self._engine.board.max_height()
-            reward = 2 * lock.attack_sent + info["b2b_delta"] + lock.lines_cleared
+            reward = 2.0 * lock.attack_sent + info["b2b_delta"] + lock.lines_cleared - (0.1 * (info["height_delta"])) + 0.05
             if terminated:          # Top-out, not the 500-piece time limit
                 reward -= 50.0
             return self.observe(), reward, terminated, truncated, info
@@ -338,7 +339,7 @@ def _(PREVIEW_COUNT, nn, np, tetris_py):
         def forward(self, x):
             return self.layers(x).squeeze(-1)
 
-    def encode(observation, placement: tetris_py.Placement):
+    def encode(observation, placement: tetris_py.Placement) -> np.ndarray:
         # Keep this feature order paired with ENCODING_VERSION in checkpoints.
         board = np.asarray(observation["board"])
         height, width = board.shape
@@ -393,7 +394,7 @@ def _(PREVIEW_COUNT, nn, np, tetris_py):
         ], dtype=np.float32)
         spin_one_hot = np.zeros(3, dtype=np.float32)
         spin_one_hot[int(placement.spin)] = 1.0
-    
+
 
         return np.concatenate((
             occupied, garbage, landing.ravel(),
@@ -723,45 +724,63 @@ def _(
     np,
     torch,
 ):
+    from collections import deque
+    from typing import List, Tuple
+
     def train_an_episode_q_learning(
         seed: int,
         q_online: nn.Module,
         optimizer: torch.optim.Adam,
         training_env: PlacementEnv,
         gamma: float,
+        n: int = 14,
         epsilon: float = 0.05,
         explore_random: bool = False,
     ):
         observation = training_env.reset(seed)
-        while True:
-            action = get_action_random(training_env, observation, q_online, epsilon) if explore_random else get_action_expert(training_env, observation, q_online, epsilon)
-            next_observation, reward, terminated, truncated, info = training_env.step(action)
+        pending: deque[Tuple[np.ndarray, float]] = deque() # queue of (features, reward)
 
-            current_input = torch.as_tensor(
-                encode(observation, action), dtype=torch.float32, device=device
-            ).unsqueeze(0)
-            prediction = q_online(current_input)[0]
-
-            observation = next_observation
-
-            # Q learning target update
-            with torch.no_grad():
-                if terminated or truncated:
-                    target = torch.tensor(reward, dtype=torch.float32, device=device)
-                else:
+        # Q learning n step TD target update
+        def update_oldest(bootstrap_observation = None):
+            # Calc target
+            steps = len(pending)
+            reward_sum = sum((gamma**i) * reward for i, (_, reward) in enumerate(pending))
+            target = torch.tensor(reward_sum, dtype=torch.float32, device=device)
+            if bootstrap_observation is not None:
+                with torch.no_grad():
                     next_actions = training_env.legal_placements()
-                    next_features = np.stack([encode(next_observation, a) for a in next_actions])
+                    next_features = np.stack([encode(bootstrap_observation, a) for a in next_actions])
                     next_batch = torch.as_tensor(next_features, dtype=torch.float32, device=device)
-                    target = reward + gamma * q_online(next_batch).max()
+                    target += (gamma**steps) * q_online(next_batch).max()
+
+            # Update
+            current_features, _ = pending[0]
+            current_batch = torch.as_tensor(current_features, dtype=torch.float32, device=device).unsqueeze(0)
+            prediction = q_online(current_batch)[0]
+        
             loss = F.smooth_l1_loss(prediction, target)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
+            pending.popleft()
+
+    
+        while True:
+            action = get_action_random(training_env, observation, q_online, epsilon) if explore_random else get_action_expert(training_env, observation, q_online, epsilon)
+            next_observation, reward, terminated, truncated, info = training_env.step(action)
+            features = encode(observation, action)
+            pending.append((features, reward))
+
+            if len(pending) == n:
+                update_oldest(None if terminated or truncated else next_observation)
 
             if terminated or truncated:
+                while pending:
+                    update_oldest()
                 break
+            observation = next_observation
 
-    return (train_an_episode_q_learning,)
+    return List, Tuple, train_an_episode_q_learning
 
 
 @app.cell(hide_code=True)
@@ -880,7 +899,6 @@ def _(ENCODING_VERSION, PlacementQFunction, device, feature_dim, gamma, torch):
     import os as _os
     import pathlib as _pathlib
     import tempfile as _tempfile
-    from typing import List, Tuple
 
     checkpoint_root = (
         _pathlib.Path("/home/ntd/Projects/tetris/tetris_ai")
@@ -980,13 +998,7 @@ def _(ENCODING_VERSION, PlacementQFunction, device, feature_dim, gamma, torch):
             file.write(_json.dumps(summary, sort_keys=True) + "\n")
         return latest, versioned
 
-    return (
-        List,
-        Tuple,
-        checkpoint_dir,
-        init_training_model,
-        save_training_model,
-    )
+    return checkpoint_dir, init_training_model, save_training_model
 
 
 @app.cell(hide_code=True)
@@ -1048,7 +1060,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    N_EPISODES = 990
+    N_EPISODES = 31600
     q_train_button = mo.ui.run_button(label=f"Train Q-learning ({N_EPISODES} episodes)")
     mc_train_button = mo.ui.run_button(label=f"Train Monte carlo ({N_EPISODES} episodes)")
     bc_train_button = mo.ui.run_button(
@@ -1115,7 +1127,9 @@ def _(
                 optimizer=trained_optimizer,
                 training_env=_train_env,
                 gamma=gamma,
+                n=35,
                 epsilon=0.1,
+                explore_random=True
             )
         elif training_method == "behaviour_cloning":
             train_an_episode_behaviour_cloning(
@@ -1131,7 +1145,7 @@ def _(
                 optimizer=trained_optimizer,
                 training_env=_train_env,
                 gamma=gamma,
-                epsilon=0.1,
+                epsilon=0.05,
                 explore_random=True,
             )
         _finished = _episode + 1
@@ -1179,6 +1193,7 @@ def _(mo):
 @app.cell
 def _(checkpoint_dir, mo, refresh_charts):
     import json
+    import math
     from html import escape
 
     def load_evaluation_history(path):
@@ -1195,23 +1210,51 @@ def _(checkpoint_dir, mo, refresh_charts):
     def evaluation_chart(records, title, key, tick_format="count", scale=1):
         """Draw an SVG chart without adding a plotting-library dependency."""
         width, height = 560, 250
-        left, right, top, bottom = 66, 20, 30, 43
+        left, right, top, bottom = 66, 35, 30, 43
         plot_width = width - left - right
         plot_height = height - top - bottom
         episodes = [int(record["episodes_trained"]) for record in records]
         values = [float(record[key]) * scale for record in records]
+        if episodes[0] == episodes[-1]:
+            x_min = x_max = episodes[0]
+            x_ticks = (episodes[0],)
+        else:
+            # Round the episode axis to evenly spaced, readable milestones.
+            magnitude = 10 ** max(
+                0, math.floor(math.log10((episodes[-1] - episodes[0]) / 5))
+            )
+            for multiple in (1, 2, 5, 10):
+                x_step = multiple * magnitude
+                x_min = episodes[0] // x_step * x_step
+                x_max = (episodes[-1] + x_step - 1) // x_step * x_step
+                if (x_max - x_min) // x_step <= 6:
+                    break
+            x_ticks = range(x_min, x_max + x_step, x_step)
         # Smooth over up to ten saved evaluations, regardless of their cadence.
         smoothed = [
             sum(values[max(0, i - 9):i + 1]) / min(i + 1, 10)
             for i in range(len(values))
         ]
-        ymax = 100 if tick_format == "percent" else max(values) * 1.05 or 1
+        if tick_format == "percent":
+            step, intervals = 20, 5
+        elif max(values) <= 0:
+            step, intervals = (0.1 if tick_format == "ratio" else 1), 4
+        else:
+            peak = max(values)
+            magnitude = 10 ** math.floor(math.log10(peak / 5))
+            # Use 1, 2 or 5 times a power of ten for four to six grid intervals.
+            step = next(
+                multiple * magnitude for multiple in (1, 2, 5, 10)
+                if peak <= 6 * multiple * magnitude
+            )
+            intervals = max(4, math.ceil(peak / step))
+        ymax = intervals * step
 
         def x(episode):
-            if len(episodes) == 1:
+            if x_min == x_max:
                 return left + plot_width / 2
             return left + plot_width * (
-                (episode - episodes[0]) / (episodes[-1] - episodes[0])
+                (episode - x_min) / (x_max - x_min)
             )
 
         def y(value):
@@ -1226,9 +1269,10 @@ def _(checkpoint_dir, mo, refresh_charts):
         def label(value):
             if tick_format == "percent":
                 return f"{value:.0f}%"
+            decimals = max(0, -math.floor(math.log10(step)))
             if tick_format == "ratio":
-                return f"{value:.2f}"
-            return f"{value:,.0f}"
+                decimals = max(2, decimals)
+            return f"{value:,.{decimals}f}"
 
         parts = [
             f'<svg viewBox="0 0 {width} {height}" role="img" '
@@ -1238,8 +1282,8 @@ def _(checkpoint_dir, mo, refresh_charts):
             f'<text x="{left}" y="21" font-size="15" font-weight="600" '
             f'fill="#0f172a">{escape(title)}</text>',
         ]
-        for fraction in (0, 0.5, 1):
-            value = ymax * fraction
+        for index in range(intervals + 1):
+            value = index * step
             position = y(value)
             parts.append(
                 f'<line x1="{left}" y1="{position:.1f}" x2="{width - right}" '
@@ -1247,10 +1291,13 @@ def _(checkpoint_dir, mo, refresh_charts):
                 f'<text x="{left - 9}" y="{position + 4:.1f}" text-anchor="end" '
                 f'font-size="11" fill="#475569">{label(value)}</text>'
             )
-        for episode in sorted({episodes[0], (episodes[0] + episodes[-1]) // 2,
-                               episodes[-1]}):
+        for episode in x_ticks:
+            position = x(episode)
             parts.append(
-                f'<text x="{x(episode):.1f}" y="{height - 12}" '
+                f'<line x1="{position:.1f}" y1="{top}" '
+                f'x2="{position:.1f}" y2="{top + plot_height}" '
+                'stroke="#f1f5f9"/>'
+                f'<text x="{position:.1f}" y="{height - 12}" '
                 f'text-anchor="middle" font-size="11" fill="#475569">'
                 f'{episode:,}</text>'
             )

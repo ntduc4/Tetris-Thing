@@ -39,7 +39,7 @@ bool rotation_move(Movement move) {
          move == Movement::HalfRotation;
 }
 
-using SearchKey = std::tuple<int, int, int, int, int, int, int>;
+using SearchKey = std::tuple<int, int, int, int, int, int, int, int>;
 using PlacementKey = std::tuple<int, int, int, SpinType>;
 
 template <typename Tuple> struct TupleHash {
@@ -59,7 +59,8 @@ SearchKey search_key(const ActivePiece &piece, const SpinContext &context) {
           rotated ? static_cast<int>(context.last_movement) : 0,
           rotated && context.kick_offset.has_value(),
           rotated && context.kick_offset ? context.kick_offset->row : 0,
-          rotated && context.kick_offset ? context.kick_offset->col : 0};
+          rotated && context.kick_offset ? context.kick_offset->col : 0,
+          rotated && context.guideline_point_five};
 }
 
 } // namespace
@@ -71,7 +72,7 @@ Engine Engine::clone() const {
               _attack_scheme ? _attack_scheme->clone() : nullptr,
               _preview_count, _spawn_col_offset, _spawn_row_offset,
               _starting_gravity, _gravity_increase, _gravity_margin_time,
-              _lock_delay);
+              _lock_delay, _guideline_2009);
   copy._active_piece = _active_piece;
   copy._hold_piece = _hold_piece;
   copy._game_over = _game_over;
@@ -81,6 +82,8 @@ Engine Engine::clone() const {
   copy._combo = _combo;
   copy._back_to_back = _back_to_back;
   copy._back_to_back_count = _back_to_back_count;
+  copy._level = _level;
+  copy._has_landed = _has_landed;
   copy._tick_count = _tick_count;
   copy._gravity_progress = _gravity_progress;
   copy._grounded_last_tick = _grounded_last_tick;
@@ -90,6 +93,7 @@ Engine Engine::clone() const {
   copy._last_tick_was_player_action = _last_tick_was_player_action;
   copy._gravity = _gravity;
   copy._gravity_counter = _gravity_counter;
+  copy._lowest_row_reached = _lowest_row_reached;
   copy._spin_context = _spin_context;
   copy._last_successful_placement = _last_successful_placement;
   copy._last_lock_result = _last_lock_result;
@@ -98,6 +102,9 @@ Engine Engine::clone() const {
   copy._edit_mode = _edit_mode;
   copy._pending_garbage = _pending_garbage;
   copy._garbage_queue_delay = _garbage_queue_delay;
+  copy._garbage_rng = _garbage_rng;
+  copy._guideline_hole = _guideline_hole;
+  copy._guideline_hole_rows = _guideline_hole_rows;
   copy._rule_context = _rule_context;
   return copy;
 }
@@ -119,6 +126,8 @@ void Engine::restore(const Engine &snapshot) {
   _combo = snapshot._combo;
   _back_to_back = snapshot._back_to_back;
   _back_to_back_count = snapshot._back_to_back_count;
+  _level = snapshot._level;
+  _has_landed = snapshot._has_landed;
   _spawn_col_offset = snapshot._spawn_col_offset;
   _spawn_row_offset = snapshot._spawn_row_offset;
   _tick_count = snapshot._tick_count;
@@ -131,6 +140,7 @@ void Engine::restore(const Engine &snapshot) {
   _starting_gravity = snapshot._starting_gravity;
   _gravity = snapshot._gravity;
   _gravity_counter = snapshot._gravity_counter;
+  _lowest_row_reached = snapshot._lowest_row_reached;
   _gravity_increase = snapshot._gravity_increase;
   _gravity_margin_time = snapshot._gravity_margin_time;
   _lock_delay = snapshot._lock_delay;
@@ -142,16 +152,22 @@ void Engine::restore(const Engine &snapshot) {
   _edit_mode = snapshot._edit_mode;
   _pending_garbage = snapshot._pending_garbage;
   _garbage_queue_delay = snapshot._garbage_queue_delay;
+  _garbage_rng = snapshot._garbage_rng;
+  _guideline_hole = snapshot._guideline_hole;
+  _guideline_hole_rows = snapshot._guideline_hole_rows;
 }
 
 void Engine::reset(uint64_t seed) {
   _randomizer->seed(seed);
+  _garbage_rng.seed(seed ^ 0x9e3779b97f4a7c15ULL);
   _board.reset();
   _can_hold = true;
   _game_over = false;
   _active_piece = std::nullopt;
   _hold_piece = std::nullopt;
   _spin_context = {};
+  _lowest_row_reached = 0;
+  _has_landed = false;
   _tick_count = 0;
   _gravity_counter = 0;
   _gravity = _starting_gravity;
@@ -168,9 +184,23 @@ void Engine::reset(uint64_t seed) {
   _last_successful_placement.reset();
   _last_lock_result.reset();
   _pending_garbage.clear();
+  _guideline_hole.reset();
+  _guideline_hole_rows = 0;
   _soft_drop_cells = 0;
   _hard_drop_cells = 0;
   _edit_mode = false;
+}
+
+void Engine::set_level(uint16_t level) {
+  if (level == 0 || level > 15)
+    throw std::invalid_argument("level must be between 1 and 15");
+  _level = level;
+  if (_guideline_2009) {
+    const double seconds_per_row =
+        std::pow(0.8 - (level - 1) * 0.007, level - 1);
+    _starting_gravity = _gravity = 1.0 / (60.0 * seconds_per_row);
+    _gravity_increase = 0;
+  }
 }
 
 void Engine::set_gravity(double cells_per_tick) {
@@ -212,7 +242,28 @@ bool Engine::paint_cell(uint16_t row, uint16_t col, Cell cell) {
   return true;
 }
 
-void Engine::on_player_move(bool was_grounded) {
+void Engine::on_player_move(bool was_grounded, uint16_t cells_moved) {
+  if (_guideline_2009) {
+    const Movement movement = _spin_context.last_movement;
+    const bool move_or_rotate = movement == Movement::Left ||
+        movement == Movement::Right || movement == Movement::CW ||
+        movement == Movement::CCW;
+    if ((_has_landed || was_grounded) && move_or_rotate &&
+        _lock_resets_used < _lock_reset_limit) {
+      _lock_resets_used += std::min<uint16_t>(
+          cells_moved, _lock_reset_limit - _lock_resets_used);
+      // A kick that lifts a grounded piece pauses, rather than restarts,
+      // its timer until it reaches a lower row.
+      if (!(was_grounded && (movement == Movement::CW ||
+                             movement == Movement::CCW) &&
+            !_board.grounded(*_active_piece)))
+        _lock_timer = 0;
+    }
+    _grounded_last_tick = _board.grounded(*_active_piece);
+    _has_landed |= was_grounded || _grounded_last_tick;
+    _last_tick_was_player_action = true;
+    return;
+  }
   if (!was_grounded || _lock_resets_used < _lock_reset_limit) {
     _lock_timer = 0;
     if (was_grounded)
@@ -220,6 +271,24 @@ void Engine::on_player_move(bool was_grounded) {
   }
   _grounded_last_tick = _board.grounded(*_active_piece);
   _last_tick_was_player_action = true;
+}
+
+void Engine::descended_to(const ActivePiece &piece) {
+  // SRS changes the occupied mino rows when rotating in place; track the
+  // piece's origin rather than treating a rotation as a new fall.
+  const int16_t row = piece.pos.row;
+  if (_guideline_2009 && row < _lowest_row_reached) {
+    _lowest_row_reached = row;
+    _lock_resets_used = 0;
+    _lock_timer = 0;
+  }
+}
+
+ActivePiece Engine::spawn_piece(PieceType type) const {
+  auto piece = spawn_from_piece_type(type, _spawn_row_offset, _spawn_col_offset);
+  if (_guideline_2009 && type == PieceType::O)
+    ++piece.pos.row;
+  return piece;
 }
 
 std::vector<PieceType> Engine::preview_queue() const {
@@ -230,10 +299,13 @@ bool Engine::spawn_next_piece(bool clutch_clear) {
   if (_game_over || _edit_mode || _active_piece)
     return false;
 
-  ActivePiece nextPiece = spawn_from_piece_type(
-      _randomizer->peek(), _spawn_row_offset, _spawn_col_offset);
+  ActivePiece nextPiece = spawn_piece(_randomizer->peek());
 
   if (_board.collide(nextPiece)) {
+    if (_guideline_2009) {
+      _game_over = true;
+      return false;
+    }
     if (!clutch_clear) {
       if (!_active_piece)
         _game_over = true;
@@ -245,6 +317,8 @@ bool Engine::spawn_next_piece(bool clutch_clear) {
       if (!_board.collide(nextPiece)) {
         _randomizer->pop();
         _active_piece = nextPiece;
+        _lowest_row_reached = nextPiece.pos.row;
+        _has_landed = _board.grounded(nextPiece);
         _can_hold = true;
         _spin_context = {};
         _lock_timer = _lock_resets_used = 0;
@@ -260,8 +334,16 @@ bool Engine::spawn_next_piece(bool clutch_clear) {
     return false;
   }
 
+  if (_guideline_2009) {
+    ActivePiece down = nextPiece;
+    --down.pos.row;
+    if (!_board.collide(down))
+      nextPiece = down;
+  }
   _randomizer->pop();
   _active_piece = nextPiece;
+  _lowest_row_reached = nextPiece.pos.row;
+  _has_landed = _board.grounded(nextPiece);
   _can_hold = true;
   _spin_context = {};
   _lock_timer = _lock_resets_used = 0;
@@ -279,23 +361,41 @@ bool Engine::hold(bool ignore_hold) {
     return false;
 
   if (!_hold_piece.has_value()) {
-    ActivePiece next = spawn_from_piece_type(_randomizer->peek(),
-                                             _spawn_row_offset, _spawn_col_offset);
-    if (_board.collide(next))
+    ActivePiece next = spawn_piece(_randomizer->peek());
+    if (_board.collide(next)) {
+      if (_guideline_2009)
+        _game_over = true;
       return false;
+    }
+    if (_guideline_2009) {
+      ActivePiece down = next;
+      --down.pos.row;
+      if (!_board.collide(down))
+        next = down;
+    }
     _hold_piece = _active_piece->piece.type();
     _randomizer->pop();
     _active_piece = next;
   } else {
-    ActivePiece nextPiece = spawn_from_piece_type(
-        _hold_piece.value(), _spawn_row_offset, _spawn_col_offset);
-    if (_board.collide(nextPiece))
+    ActivePiece nextPiece = spawn_piece(_hold_piece.value());
+    if (_board.collide(nextPiece)) {
+      if (_guideline_2009)
+        _game_over = true;
       return false;
+    }
+    if (_guideline_2009) {
+      ActivePiece down = nextPiece;
+      --down.pos.row;
+      if (!_board.collide(down))
+        nextPiece = down;
+    }
 
     _hold_piece = _active_piece->piece.type();
     _active_piece = nextPiece;
   }
   _can_hold = false;
+  _lowest_row_reached = _active_piece->pos.row;
+  _has_landed = _board.grounded(*_active_piece);
   _spin_context = {};
   _lock_timer = _lock_resets_used = 0;
   _gravity_counter = 0;
@@ -313,6 +413,7 @@ bool Engine::try_move_left(int16_t amount) {
   if (_board.collide(p))
     return false;
   bool was_grounded = _board.grounded(p);
+  const int16_t start_col = p.pos.col;
 
   for (int32_t amt = amount < 0 ? _board.get_width() : amount; amt > 0; amt--) {
     p.pos.col--;
@@ -323,7 +424,9 @@ bool Engine::try_move_left(int16_t amount) {
       _active_piece = p;
       _spin_context.kick_offset = std::nullopt;
       _spin_context.last_movement = Movement::Left;
-      on_player_move(was_grounded);
+      _spin_context.guideline_point_five = false;
+      on_player_move(was_grounded, static_cast<uint16_t>(
+          start_col - p.pos.col));
       return true;
     }
   }
@@ -331,7 +434,9 @@ bool Engine::try_move_left(int16_t amount) {
   _active_piece = p;
   _spin_context.kick_offset = std::nullopt;
   _spin_context.last_movement = Movement::Left;
-  on_player_move(was_grounded);
+  _spin_context.guideline_point_five = false;
+  on_player_move(was_grounded, static_cast<uint16_t>(
+      start_col - p.pos.col));
   return true;
 }
 
@@ -344,6 +449,7 @@ bool Engine::try_move_right(int16_t amount) {
   if (_board.collide(p))
     return false;
   bool was_grounded = _board.grounded(p);
+  const int16_t start_col = p.pos.col;
 
   for (int32_t amt = amount < 0 ? _board.get_width() : amount; amt > 0; amt--) {
     p.pos.col++;
@@ -354,7 +460,9 @@ bool Engine::try_move_right(int16_t amount) {
       _active_piece = p;
       _spin_context.kick_offset = std::nullopt;
       _spin_context.last_movement = Movement::Right;
-      on_player_move(was_grounded);
+      _spin_context.guideline_point_five = false;
+      on_player_move(was_grounded, static_cast<uint16_t>(
+          p.pos.col - start_col));
       return true;
     }
   }
@@ -362,7 +470,9 @@ bool Engine::try_move_right(int16_t amount) {
   _active_piece = p;
   _spin_context.kick_offset = std::nullopt;
   _spin_context.last_movement = Movement::Right;
-  on_player_move(was_grounded);
+  _spin_context.guideline_point_five = false;
+  on_player_move(was_grounded, static_cast<uint16_t>(
+      p.pos.col - start_col));
   return true;
 }
 
@@ -385,8 +495,10 @@ bool Engine::try_soft_drop(int16_t amount) {
       if (p.pos.row == _active_piece.value().pos.row)
         return false;
       _active_piece = p;
+      descended_to(p);
       _spin_context.kick_offset = std::nullopt;
       _spin_context.last_movement = Movement::SoftDrop;
+      _spin_context.guideline_point_five = false;
       _soft_drop_cells += old_row - p.pos.row;
       on_player_move(was_grounded);
       return true;
@@ -394,8 +506,10 @@ bool Engine::try_soft_drop(int16_t amount) {
   }
 
   _active_piece = p;
+  descended_to(p);
   _spin_context.kick_offset = std::nullopt;
   _spin_context.last_movement = Movement::SoftDrop;
+  _spin_context.guideline_point_five = false;
   _soft_drop_cells += old_row - p.pos.row;
   on_player_move(was_grounded);
   return true;
@@ -419,19 +533,24 @@ bool Engine::try_rotate_cw() {
     _spin_context.kick_offset = std::nullopt;
     _spin_context.last_movement = Movement::CW;
     on_player_move(was_grounded);
+    descended_to(p);
     return true;
   }
 
   std::vector offsets =
       _rotation_system->kick_offsets(p.piece.type(), r, p.piece.rotation());
-  for (Offset o : offsets) {
+  for (size_t i = 0; i < offsets.size(); ++i) {
+    Offset o = offsets[i];
     p.pos = {.row = static_cast<int16_t>(_active_piece->pos.row + o.row),
              .col = static_cast<int16_t>(_active_piece->pos.col + o.col)};
     if (!_board.collide(p)) {
       _active_piece = p;
       _spin_context.kick_offset = o;
       _spin_context.last_movement = Movement::CW;
+      if (_guideline_2009 && i == 4)
+        _spin_context.guideline_point_five = true;
       on_player_move(was_grounded);
+      descended_to(p);
       return true;
     }
   }
@@ -457,19 +576,24 @@ bool Engine::try_rotate_ccw() {
     _spin_context.kick_offset = std::nullopt;
     _spin_context.last_movement = Movement::CCW;
     on_player_move(was_grounded);
+    descended_to(p);
     return true;
   }
 
   std::vector offsets =
       _rotation_system->kick_offsets(p.piece.type(), r, p.piece.rotation());
-  for (Offset o : offsets) {
+  for (size_t i = 0; i < offsets.size(); ++i) {
+    Offset o = offsets[i];
     p.pos = {.row = static_cast<int16_t>(_active_piece->pos.row + o.row),
              .col = static_cast<int16_t>(_active_piece->pos.col + o.col)};
     if (!_board.collide(p)) {
       _active_piece = p;
       _spin_context.kick_offset = o;
       _spin_context.last_movement = Movement::CCW;
+      if (_guideline_2009 && i == 4)
+        _spin_context.guideline_point_five = true;
       on_player_move(was_grounded);
+      descended_to(p);
       return true;
     }
   }
@@ -478,8 +602,9 @@ bool Engine::try_rotate_ccw() {
 }
 
 bool Engine::try_rotate_180() {
-  if (_game_over || _edit_mode || !_active_piece.has_value() ||
-      !_rotation_system->allows_rotation())
+  if (_game_over || _edit_mode || _guideline_2009 || !_active_piece.has_value() ||
+      !_rotation_system->allows_rotation() ||
+      !_rotation_system->allows_half_turn())
     return false;
 
   ActivePiece p = _active_piece.value();
@@ -494,6 +619,7 @@ bool Engine::try_rotate_180() {
     _active_piece = p;
     _spin_context.kick_offset = std::nullopt;
     _spin_context.last_movement = Movement::HalfRotation;
+    _spin_context.guideline_point_five = false;
     on_player_move(was_grounded);
     return true;
   }
@@ -507,6 +633,7 @@ bool Engine::try_rotate_180() {
       _active_piece = p;
       _spin_context.kick_offset = o;
       _spin_context.last_movement = Movement::HalfRotation;
+      _spin_context.guideline_point_five = false;
       on_player_move(was_grounded);
       return true;
     }
@@ -585,17 +712,21 @@ TickResult Engine::tick() {
       _gravity_counter -= std::floor(_gravity_counter);
     if (res.moved_down) {
       _active_piece = p;
+      descended_to(p);
       _spin_context.kick_offset = std::nullopt;
       _spin_context.last_movement = Movement::Gravity;
+      _spin_context.guideline_point_five = false;
     }
   }
 
   bool grounded = _board.grounded(*_active_piece);
   if (grounded) {
+    _has_landed = true;
     // Landing starts the delay; a previously grounded piece counts this tick.
     if (_grounded_last_tick || !res.moved_down)
       ++_lock_timer;
-    if (_lock_delay == 0 || _lock_timer >= _lock_delay) {
+    if (_lock_delay == 0 || _lock_timer >= _lock_delay ||
+        (_guideline_2009 && _lock_resets_used >= _lock_reset_limit)) {
       LockResult lock = lock_active_piece();
       res.locked = lock.locked;
       res.lines_cleared = lock.lines_cleared;
@@ -604,7 +735,8 @@ TickResult Engine::tick() {
       res.game_over = lock.game_over;
     }
   } else {
-    _lock_timer = 0;
+    if (!_guideline_2009)
+      _lock_timer = 0;
   }
   _grounded_last_tick = grounded && !res.locked;
   return res;
@@ -625,6 +757,7 @@ LockResult Engine::lock_hard_drop_landing(const ActivePiece &landing) {
     _active_piece = landing;
     _spin_context.last_movement = Movement::HardDrop;
     _spin_context.kick_offset.reset();
+    _spin_context.guideline_point_five = false;
   }
   _hard_drop_cells = distance;
   return lock_active_piece();
@@ -641,10 +774,16 @@ LockResult Engine::lock_active_piece() {
     return {};
   SpinType spin = _spin_system ? _spin_system->detect(_board, p, _spin_context)
                                : SpinType::None;
-  for (Offset o : p.piece.current_shape_array())
+  bool lock_out = _guideline_2009;
+  for (Offset o : p.piece.current_shape_array()) {
+    lock_out &= o.row + p.pos.row >= VisibleHeight;
     _board.set(o.row + p.pos.row, o.col + p.pos.col, p.piece.cell_type());
+  }
 
   _active_piece = std::nullopt;
+  _has_landed = false;
+  if (lock_out)
+    _game_over = true;
   bool cleared_garbage = false;
   uint16_t lc = _board.clear_lines(&cleared_garbage);
   bool perfect_clear = lc > 0 && _board.max_height() == 0;
@@ -675,7 +814,8 @@ LockResult Engine::lock_active_piece() {
                          .combo = _combo,
                          .hard_drop_cells = _hard_drop_cells,
                          .soft_drop_cells = static_cast<uint16_t>(std::min<uint32_t>(
-                             _soft_drop_cells, UINT16_MAX))};
+                             _soft_drop_cells, UINT16_MAX)),
+                         .level = _level};
   const uint64_t score_before = _score;
   if (_score_system)
     _score += _score_system->score(score_event);
@@ -707,7 +847,7 @@ LockResult Engine::lock_active_piece() {
                      [](const PendingGarbage &packet) { return packet.event.lines == 0; }),
       _pending_garbage.end());
   // Clearing a line tanks the remaining garbage, even if the clear sent no attack.
-  if (lc == 0)
+  if (lc == 0 || _guideline_2009)
     apply_ready_garbage();
   _lines_cleared += lc;
   _spin_context = {};
@@ -739,13 +879,40 @@ void Engine::receive_garbage(const GarbageEvent &garbage) {
                               .delay_ticks = _garbage_queue_delay});
 }
 
+void Engine::receive_random_garbage(uint16_t lines) {
+  if (!_guideline_2009)
+    throw std::logic_error(
+        "random eight-line garbage requires the Guideline profile");
+  if (_game_over || lines == 0)
+    return;
+  _pending_garbage.push_back({.event = {.lines = lines, .hole_col = 0},
+                              .delay_ticks = _garbage_queue_delay,
+                              .random_hole = true});
+}
+
 void Engine::apply_ready_garbage() {
-  uint16_t remaining = 8;
+  uint32_t remaining = _guideline_2009 ? UINT16_MAX : 8;
   while (!_pending_garbage.empty() &&
-         _pending_garbage.front().delay_ticks == 0 && remaining > 0) {
+          _pending_garbage.front().delay_ticks == 0 && remaining > 0) {
     auto &packet = _pending_garbage.front();
-    uint16_t lines = std::min(remaining, packet.event.lines);
-    _board.add_garbage(packet.event.hole_col, lines);
+    uint16_t lines = static_cast<uint16_t>(
+        std::min<uint32_t>(remaining, packet.event.lines));
+    uint16_t hole = packet.event.hole_col;
+    if (packet.random_hole) {
+      if (!_guideline_hole || _guideline_hole_rows == 8) {
+        const uint16_t width = _board.get_width();
+        uint16_t choice = std::uniform_int_distribution<uint16_t>(
+            0, width - (_guideline_hole ? 2 : 1))(_garbage_rng);
+        if (_guideline_hole && choice >= *_guideline_hole)
+          ++choice;
+        _guideline_hole = choice;
+        _guideline_hole_rows = 0;
+      }
+      hole = *_guideline_hole;
+      lines = std::min<uint16_t>(lines, 8 - _guideline_hole_rows);
+      _guideline_hole_rows += lines;
+    }
+    _board.add_garbage(hole, lines);
     remaining -= lines;
     packet.event.lines -= lines;
     if (packet.event.lines == 0)
@@ -863,6 +1030,7 @@ LockResult Engine::apply_placement(const Placement &placement) {
   // without cloning the rules or the board on every placement.
   const auto active = _active_piece;
   const auto held = _hold_piece;
+  const bool game_over_before = _game_over;
   const bool can_hold_before = _can_hold;
   const auto spin = _spin_context;
   const auto soft_drop = _soft_drop_cells;
@@ -871,6 +1039,8 @@ LockResult Engine::apply_placement(const Placement &placement) {
   const auto grounded = _grounded_last_tick;
   const auto timer = _lock_timer;
   const auto resets = _lock_resets_used;
+  const auto has_landed = _has_landed;
+  const auto lowest_row_reached = _lowest_row_reached;
   const auto last_action = _last_tick_was_player_action;
   auto random_before = placement.use_hold ? _randomizer->clone() : nullptr;
   if (random_before)
@@ -879,6 +1049,7 @@ LockResult Engine::apply_placement(const Placement &placement) {
   auto rollback = [&] {
     _active_piece = active;
     _hold_piece = held;
+    _game_over = game_over_before;
     _can_hold = can_hold_before;
     _spin_context = spin;
     _soft_drop_cells = soft_drop;
@@ -887,6 +1058,8 @@ LockResult Engine::apply_placement(const Placement &placement) {
     _grounded_last_tick = grounded;
     _lock_timer = timer;
     _lock_resets_used = resets;
+    _has_landed = has_landed;
+    _lowest_row_reached = lowest_row_reached;
     _last_tick_was_player_action = last_action;
     if (random_before)
       _randomizer->restore_from(*random_before);

@@ -133,25 +133,29 @@ void test_tetrio_season_two_attack() {
 void test_guideline_attack() {
   using namespace tetris;
   GuidelineAttack guideline;
-  constexpr std::array<uint16_t, 13> singles{
-      0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 4, 5, 5};
-  for (uint32_t combo = 0; combo < singles.size(); ++combo)
+  for (uint16_t lines = 0; lines <= 4; ++lines) {
+    constexpr std::array<uint16_t, 5> normal{0, 0, 1, 2, 4};
+    constexpr std::array<uint16_t, 4> full{0, 2, 4, 6};
     require(guideline.garbage_to_send(AttackContext{
-                .lines_cleared = 1, .combo = combo}) == singles[combo],
-            "Guideline singles use the standard additive combo table");
+                .lines_cleared = lines, .perfect_clear = true,
+                .combo = 100}) == normal[lines] &&
+            (lines == 4 || guideline.garbage_to_send(AttackContext{
+                .lines_cleared = lines, .spin = SpinType::Full,
+                .piece = PieceType::T}) == full[lines]),
+            "2009 Guideline attacks do not add combo or all-clear bonuses");
+  }
   require(guideline.garbage_to_send(AttackContext{
-              .lines_cleared = 1, .combo = 100}) == 5 &&
+              .lines_cleared = 4, .back_to_back = true}) == 5 &&
               guideline.garbage_to_send(AttackContext{
-                  .lines_cleared = 2, .combo = 4}) == 3 &&
+                  .lines_cleared = 2, .spin = SpinType::Full,
+                  .back_to_back = true, .piece = PieceType::T}) == 5 &&
               guideline.garbage_to_send(AttackContext{
-                  .lines_cleared = 4, .back_to_back = true,
-                  .combo = 4}) == 7 &&
+                  .lines_cleared = 1, .spin = SpinType::Mini,
+                  .back_to_back = true, .piece = PieceType::T}) == 0 &&
               guideline.garbage_to_send(AttackContext{
-                  .lines_cleared = 4, .perfect_clear = true,
-                  .combo = 4}) == 16 &&
-              guideline.garbage_to_send(AttackContext{
-                  .lines_cleared = 0, .combo = 100}) == 0,
-          "Guideline base, B2B, combo and perfect-clear bonuses must add");
+                  .lines_cleared = 2, .spin = SpinType::Full,
+                  .piece = PieceType::O}) == 1,
+          "B2B adds a line only to qualifying attacks; non-T spins are ignored");
   require(TableAttack{}.garbage_to_send(AttackContext{
               .lines_cleared = 1, .combo = 2}) == 0,
           "custom attack tables retain their configurable multiplier semantics");

@@ -158,6 +158,7 @@ void usage() {
   std::cout << "tetris_cli [--seed N] [--width N] [--height N] [--gravity G] "
                "[--lock-delay ticks] [--spin t|all|none] "
                "[--rotation srs+|srs-x|none] "
+               "[--ruleset default|guideline-2009] [--level 1..15] "
                "[--mode marathon|sprint|blitz] [--goal lines] "
                "[--time seconds] [--ticks N]\n"
                "Runs a 60-tick-per-second terminal game. --ticks runs a headless smoke test.\n";
@@ -170,8 +171,10 @@ int main(int argc, char **argv) {
     uint16_t width = 10, height = 40;
     double gravity = DefaultGravity;
     uint64_t lock_delay = DefaultLockDelay, headless_ticks = 0;
+    uint16_t start_level = 1;
     std::string spin = "all";
     std::string rotation = "srs+";
+    std::string ruleset = "default";
     SoloSettings solo;
     for (int i = 1; i < argc; ++i) {
       std::string arg = argv[i];
@@ -185,6 +188,9 @@ int main(int argc, char **argv) {
       else if (arg == "--lock-delay") lock_delay = std::stoull(value);
       else if (arg == "--spin") spin = value;
       else if (arg == "--rotation") rotation = value;
+      else if (arg == "--ruleset") ruleset = value;
+      else if (arg == "--level") start_level =
+          static_cast<uint16_t>(std::stoul(value));
       else if (arg == "--ticks") headless_ticks = std::stoull(value);
       else if (arg == "--mode") {
         if (value == "marathon") solo.mode = SoloMode::Marathon;
@@ -199,22 +205,32 @@ int main(int argc, char **argv) {
     }
     if (width < 4 || width > 40 || height < 4 || height > 80 ||
         (spin != "t" && spin != "all" && spin != "none") ||
-        (rotation != "srs+" && rotation != "srs-x" && rotation != "none")) {
+        (rotation != "srs+" && rotation != "srs-x" && rotation != "none") ||
+        (ruleset != "default" && ruleset != "guideline-2009") ||
+        start_level < 1 || start_level > 15 ||
+        (ruleset == "guideline-2009" && (width != 10 || height != 40))) {
       usage(); return 1;
     }
+    const bool guideline = ruleset == "guideline-2009";
     std::unique_ptr<SpinSystem> spin_system;
-    if (spin == "t") spin_system = std::make_unique<TSpin>();
-    if (spin == "all") spin_system = std::make_unique<AllSpin>();
+    if (guideline) spin_system = std::make_unique<GuidelineTSpin>();
+    else if (spin == "t") spin_system = std::make_unique<TSpin>();
+    else if (spin == "all") spin_system = std::make_unique<AllSpin>();
     std::unique_ptr<RotationSystem> rotation_system;
-    if (rotation == "srs+") rotation_system = std::make_unique<SRSPlus>();
-    if (rotation == "srs-x") rotation_system = std::make_unique<SRSX>();
-    if (rotation == "none") rotation_system = std::make_unique<None>();
+    if (guideline) rotation_system = std::make_unique<GuidelineSRS>();
+    else if (rotation == "srs+") rotation_system = std::make_unique<SRSPlus>();
+    else if (rotation == "srs-x") rotation_system = std::make_unique<SRSX>();
+    else if (rotation == "none") rotation_system = std::make_unique<None>();
     Engine game(Board(width, height), std::move(rotation_system),
-                std::make_unique<SevenBag>(seed), std::move(spin_system),
-                std::make_unique<Classical>(), std::make_unique<TetrioSS2>(),
-                DefaultQueueLength, (width - 4) / 2,
-                std::min<int>(height - 4, VisibleHeight - 3), gravity, 0,
-                DefaultGravityMarginTime, lock_delay);
+                 std::make_unique<SevenBag>(seed), std::move(spin_system),
+                 guideline ? std::unique_ptr<ScoreSystem>(std::make_unique<GuidelineScore>())
+                           : std::unique_ptr<ScoreSystem>(std::make_unique<Classical>()),
+                 guideline ? std::unique_ptr<AttackScheme>(std::make_unique<GuidelineAttack>())
+                           : std::unique_ptr<AttackScheme>(std::make_unique<TetrioSS2>()),
+                 DefaultQueueLength, (width - 4) / 2,
+                 std::min<int>(height - 4, VisibleHeight - 3), gravity, 0,
+                 DefaultGravityMarginTime, lock_delay, guideline);
+    game.set_level(start_level);
     SoloSession session(std::move(game), solo);
     session.start(seed);
     if (headless_ticks > 0) {

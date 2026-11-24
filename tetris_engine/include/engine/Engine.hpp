@@ -15,6 +15,7 @@
 #include <deque>
 #include <memory>
 #include <optional>
+#include <random>
 #include <vector>
 
 namespace tetris {
@@ -29,6 +30,8 @@ struct GarbageEvent {
 struct PendingGarbage {
   GarbageEvent event;
   uint16_t delay_ticks = 0;
+  /** Hole is chosen when lines actually rise (2009 Guideline matches only). */
+  bool random_hole = false;
 };
 
 /** Describes the outcome of a player-issued action. */
@@ -92,20 +95,31 @@ public:
          std::unique_ptr<AttackScheme> attack_scheme = nullptr,
          uint8_t preview_count = DefaultQueueLength,
          int16_t spawn_col_offset = DefaultSpawnColOffset,
-         int16_t spawn_row_offset = DefaultSpawnRowOffset,
-         double gravity = DefaultGravity,
-         double gravity_increase = DefaultGravityIncrease,
-         uint64_t gravity_margin_time = DefaultGravityMarginTime,
-         uint64_t lock_delay = DefaultLockDelay)
+          int16_t spawn_row_offset = DefaultSpawnRowOffset,
+          double gravity = DefaultGravity,
+          double gravity_increase = DefaultGravityIncrease,
+          uint64_t gravity_margin_time = DefaultGravityMarginTime,
+          uint64_t lock_delay = DefaultLockDelay,
+          bool guideline_2009 = false)
       : _board{board}, _rotation_system{std::move(rotation_system)},
         _randomizer{std::move(randomizer)},
         _spin_system{std::move(spin_system)},
         _score_system{std::move(score_system)},
         _attack_scheme{std::move(attack_scheme)}, _preview_count{preview_count},
-        _spawn_col_offset{spawn_col_offset},
-        _spawn_row_offset{spawn_row_offset}, _starting_gravity{gravity},
+        _guideline_2009{guideline_2009},
+        _spawn_col_offset{guideline_2009 ? int16_t{3} : spawn_col_offset},
+        _spawn_row_offset{guideline_2009 ? int16_t{18} : spawn_row_offset},
+        _starting_gravity{gravity},
         _gravity{gravity}, _gravity_increase{gravity_increase},
-        _gravity_margin_time{gravity_margin_time}, _lock_delay{lock_delay} {};
+        _gravity_margin_time{gravity_margin_time}, _lock_delay{lock_delay} {
+    if (guideline_2009 &&
+        (board.get_width() != 10 || board.get_height() != 40 ||
+         preview_count == 0 || preview_count > 6))
+      throw std::invalid_argument(
+          "2009 Guideline requires a 10x40 board and 1..6 previews");
+    if (guideline_2009)
+      set_level(1);
+  }
 
   /** Resets engine state and reseeds the piece source. */
   void reset(uint64_t seed = 0);
@@ -148,6 +162,11 @@ public:
   }
   /** Number of simulation ticks since reset (60 ticks = one second in the CLI). */
   uint64_t tick_count() const { return _tick_count; }
+  /** The 2009 Guideline uses 20 visible rows and a 20-row buffer zone. */
+  bool guideline_2009() const { return _guideline_2009; }
+  uint16_t level() const { return _level; }
+  /** Set the level used by level-dependent score systems (1..15). */
+  void set_level(uint16_t level);
   /** Last successful lock, if any. */
   const std::optional<LockResult> &last_lock_result() const {
     return _last_lock_result;
@@ -234,6 +253,8 @@ public:
   void receive_garbage(uint16_t lines, uint16_t hole_col);
   /** Adds an incoming garbage packet. */
   void receive_garbage(const GarbageEvent &garbage);
+  /** Queue Guideline garbage; choose its hole only as lines rise, in groups of 8. */
+  void receive_random_garbage(uint16_t lines);
 
   /** Reachable hard-drop placements without hold; actions execute before any tick. */
   std::vector<Placement> generate_active_piece_placement() const;
@@ -254,8 +275,12 @@ private:
   uint32_t _combo = 0;
   bool _back_to_back = false;
   uint32_t _back_to_back_count = 0;
+  uint16_t _level = 1;
+  bool _guideline_2009 = false;
+  bool _has_landed = false;
   int16_t _spawn_col_offset = 0;
   int16_t _spawn_row_offset = 0;
+  int16_t _lowest_row_reached = 0;
 
   /** Tick-driven runtime state. */
   uint64_t _tick_count = 0;
@@ -280,13 +305,18 @@ private:
   uint16_t _hard_drop_cells = 0;
   bool _edit_mode = false;
 
-  /** Pending garbage state processed by tick progression (at most 8 lines per lock). */
+  /** Incoming packets: legacy modes cap each rise at eight lines. */
   std::deque<PendingGarbage> _pending_garbage;
   uint16_t _garbage_queue_delay = 0;
+  std::mt19937_64 _garbage_rng;
+  std::optional<uint16_t> _guideline_hole;
+  uint8_t _guideline_hole_rows = 0;
 
   /** Restarts grounded lock timing after a successful player movement. */
-  void on_player_move(bool was_grounded);
-  /** Applies up to 8 ready lines in packet order after a non-clearing lock. */
+  void on_player_move(bool was_grounded, uint16_t cells_moved = 1);
+  ActivePiece spawn_piece(PieceType type) const;
+  void descended_to(const ActivePiece &piece);
+  /** Applies ready packets in arrival order; Guideline rises after any lock. */
   void apply_ready_garbage();
   /** Commit an already-validated hard-drop landing without searching again. */
   LockResult lock_hard_drop_landing(const ActivePiece &landing);

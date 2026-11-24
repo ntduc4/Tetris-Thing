@@ -49,4 +49,14 @@ public:
   }
 };
 
+/** T-only, clockwise/counterclockwise recognition in the 2009 Guideline. */
+class GuidelineTSpin : public SpinSystem {
+public:
+  SpinType detect(const Board &board, const ActivePiece &piece,
+                   const SpinContext &context) const override;
+  std::unique_ptr<SpinSystem> clone() const override {
+    return std::make_unique<GuidelineTSpin>(*this);
+  }
+};
+
 } // namespace tetris

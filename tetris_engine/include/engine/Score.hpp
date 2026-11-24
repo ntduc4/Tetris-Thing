@@ -18,6 +18,7 @@ struct ScoreEvent {
   uint32_t combo = 0;
   uint16_t hard_drop_cells = 0;
   uint16_t soft_drop_cells = 0;
+  uint16_t level = 1;
 };
 
 /** Interface for calculating points awarded by score events. */
@@ -54,6 +55,15 @@ public:
 
 private:
   ScoreTable _table;
+};
+
+/** 2009 Guideline scoring: level-scaled clear/spin points and B2B, no PC/combo bonus. */
+class GuidelineScore : public ScoreSystem {
+public:
+  uint64_t score(const ScoreEvent &event) const override;
+  std::unique_ptr<ScoreSystem> clone() const override {
+    return std::make_unique<GuidelineScore>(*this);
+  }
 };
 /** Time-limited score attack rules. */
 class Blitz : public Classical {

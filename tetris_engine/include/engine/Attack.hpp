@@ -95,7 +95,7 @@ public:
     return std::make_unique<TetrioSS1>(*this);
   }
 };
-/** Guideline-style base attacks with the standard (TOJ) additive combo table. */
+/** 2009 Guideline multiplayer attack table; no combo or all-clear bonus. */
 class GuidelineAttack : public AttackScheme {
 public:
   uint16_t garbage_to_send(const AttackContext &ctx) const override;

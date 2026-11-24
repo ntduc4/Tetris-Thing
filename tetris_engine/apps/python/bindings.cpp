@@ -21,9 +21,9 @@ using namespace tetris;
 
 namespace {
 
-enum class RotationRule { SRSPlus, SRSX, Off };
+enum class RotationRule { SRSPlus, SRSX, Off, Guideline };
 enum class BagRule { Seven, Fourteen, Random };
-enum class SpinRule { AllMiniPlus, AllMini, TOnly, Off };
+enum class SpinRule { AllMiniPlus, AllMini, TOnly, Off, Guideline };
 enum class AttackRule { Season2, Season1, Guideline, Custom, Off };
 
 /** Python-only rule selection; the headless engine and CLI do not depend on Python. */
@@ -43,6 +43,9 @@ struct EngineConfig {
   AttackRule attack = AttackRule::Season2;
   AttackTable attacks;
   ScoreTable scores;
+  /** Overrides rotation/bag/spin/attack/score choices with the 2009 rule profile. */
+  bool guideline_2009 = false;
+  uint16_t level = 1;
 };
 
 Engine make_engine(const EngineConfig &config) {
@@ -55,33 +58,40 @@ Engine make_engine(const EngineConfig &config) {
       !std::isfinite(config.gravity_increase) || config.gravity_increase < 0)
     throw std::invalid_argument("gravity and gravity_increase must be finite and non-negative");
   if (!std::isfinite(config.attacks.combo_multiplier) ||
-      config.attacks.combo_multiplier < 0 || config.attacks.combo_multiplier > 100)
+       config.attacks.combo_multiplier < 0 || config.attacks.combo_multiplier > 100)
     throw std::invalid_argument("attack combo_multiplier must be between 0 and 100");
+  if (config.guideline_2009 &&
+      (config.width != 10 || config.height != 40 ||
+       config.preview_count > 6))
+    throw std::invalid_argument(
+        "2009 Guideline requires a 10x40 board and 1..6 previews");
 
   std::unique_ptr<RotationSystem> rotation;
-  switch (config.rotation) {
+  switch (config.guideline_2009 ? RotationRule::Guideline : config.rotation) {
   case RotationRule::SRSPlus: rotation = std::make_unique<SRSPlus>(); break;
   case RotationRule::SRSX: rotation = std::make_unique<SRSX>(); break;
+  case RotationRule::Guideline: rotation = std::make_unique<GuidelineSRS>(); break;
   case RotationRule::Off: rotation = std::make_unique<None>(); break;
   }
 
   std::unique_ptr<Randomizer> bag;
-  switch (config.bag) {
+  switch (config.guideline_2009 ? BagRule::Seven : config.bag) {
   case BagRule::Seven: bag = std::make_unique<SevenBag>(); break;
   case BagRule::Fourteen: bag = std::make_unique<FourteenBag>(); break;
   case BagRule::Random: bag = std::make_unique<Random>(); break;
   }
 
   std::unique_ptr<SpinSystem> spin;
-  switch (config.spin) {
+  switch (config.guideline_2009 ? SpinRule::Guideline : config.spin) {
   case SpinRule::AllMiniPlus: spin = std::make_unique<AllSpin>(true); break;
   case SpinRule::AllMini: spin = std::make_unique<AllSpin>(false); break;
   case SpinRule::TOnly: spin = std::make_unique<TSpin>(); break;
+  case SpinRule::Guideline: spin = std::make_unique<GuidelineTSpin>(); break;
   case SpinRule::Off: break;
   }
 
   std::unique_ptr<AttackScheme> attack;
-  switch (config.attack) {
+  switch (config.guideline_2009 ? AttackRule::Guideline : config.attack) {
   case AttackRule::Season2: attack = std::make_unique<TetrioSS2>(); break;
   case AttackRule::Season1: attack = std::make_unique<TetrioSS1>(); break;
   case AttackRule::Guideline: attack = std::make_unique<GuidelineAttack>(); break;
@@ -90,14 +100,20 @@ Engine make_engine(const EngineConfig &config) {
   }
 
   Engine engine(Board(config.width, config.height), std::move(rotation),
-                std::move(bag), std::move(spin),
-                std::make_unique<Classical>(config.scores), std::move(attack),
-                config.preview_count, (config.width - PieceDimension) / 2,
-                std::min<int>(config.height - PieceDimension, VisibleHeight - 3),
-                config.gravity, config.gravity_increase, config.gravity_margin,
-                config.lock_delay);
-  engine.set_lock_delay(config.lock_delay, config.lock_resets);
-  engine.set_garbage_delay(config.garbage_delay);
+                 std::move(bag), std::move(spin),
+                 config.guideline_2009
+                     ? std::unique_ptr<ScoreSystem>(std::make_unique<GuidelineScore>())
+                     : std::unique_ptr<ScoreSystem>(
+                           std::make_unique<Classical>(config.scores)),
+                 std::move(attack),
+                 config.preview_count, (config.width - PieceDimension) / 2,
+                 std::min<int>(config.height - PieceDimension, VisibleHeight - 3),
+                 config.gravity, config.gravity_increase, config.gravity_margin,
+                 config.lock_delay, config.guideline_2009);
+  engine.set_lock_delay(config.lock_delay,
+                        config.guideline_2009 ? 15 : config.lock_resets);
+  engine.set_garbage_delay(config.guideline_2009 ? 0 : config.garbage_delay);
+  engine.set_level(config.level);
   return engine;
 }
 
@@ -129,13 +145,15 @@ PYBIND11_MODULE(tetris_py, m) {
       .value("Full", SpinType::Full);
   py::enum_<RotationRule>(m, "RotationRule")
       .value("SRSPlus", RotationRule::SRSPlus).value("SRSX", RotationRule::SRSX)
-      .value("Off", RotationRule::Off);
+      .value("Off", RotationRule::Off)
+      .value("Guideline", RotationRule::Guideline);
   py::enum_<BagRule>(m, "BagRule")
       .value("Seven", BagRule::Seven).value("Fourteen", BagRule::Fourteen)
       .value("Random", BagRule::Random);
   py::enum_<SpinRule>(m, "SpinRule")
       .value("AllMiniPlus", SpinRule::AllMiniPlus).value("AllMini", SpinRule::AllMini)
-      .value("TOnly", SpinRule::TOnly).value("Off", SpinRule::Off);
+      .value("TOnly", SpinRule::TOnly).value("Off", SpinRule::Off)
+      .value("Guideline", SpinRule::Guideline);
   py::enum_<AttackRule>(m, "AttackRule")
       .value("Season2", AttackRule::Season2).value("Season1", AttackRule::Season1)
       .value("Guideline", AttackRule::Guideline).value("Custom", AttackRule::Custom)
@@ -178,7 +196,9 @@ PYBIND11_MODULE(tetris_py, m) {
       .def_readwrite("spin", &EngineConfig::spin)
       .def_readwrite("attack", &EngineConfig::attack)
       .def_readwrite("attacks", &EngineConfig::attacks)
-      .def_readwrite("scores", &EngineConfig::scores);
+      .def_readwrite("scores", &EngineConfig::scores)
+      .def_readwrite("guideline_2009", &EngineConfig::guideline_2009)
+      .def_readwrite("level", &EngineConfig::level);
 
   py::class_<Position>(m, "Position")
       .def_readonly("row", &Position::row).def_readonly("col", &Position::col);
@@ -186,7 +206,8 @@ PYBIND11_MODULE(tetris_py, m) {
       .def_readonly("row", &Offset::row).def_readonly("col", &Offset::col);
   py::class_<SpinContext>(m, "SpinContext")
       .def_readonly("last_movement", &SpinContext::last_movement)
-      .def_readonly("kick_offset", &SpinContext::kick_offset);
+      .def_readonly("kick_offset", &SpinContext::kick_offset)
+      .def_readonly("guideline_point_five", &SpinContext::guideline_point_five);
   py::class_<Placement>(m, "Placement",
       "Engine-generated placement with its final pose, movement path, and spin.")
       .def_readonly("moves", &Placement::moves)
@@ -273,13 +294,16 @@ PYBIND11_MODULE(tetris_py, m) {
       .def("set_lock_delay", &Engine::set_lock_delay,
            py::arg("ticks"), py::arg("reset_limit") = 15)
       .def("set_garbage_delay", &Engine::set_garbage_delay)
+      .def("set_level", &Engine::set_level)
       .def("set_edit_mode", &Engine::set_edit_mode)
       .def("paint_cell", &Engine::paint_cell,
            py::arg("row"), py::arg("col"), py::arg("cell"))
       .def("receive_garbage", py::overload_cast<uint16_t, uint16_t>(
            &Engine::receive_garbage), py::arg("lines"), py::arg("hole_col"))
       .def("receive_garbage", py::overload_cast<const GarbageEvent &>(
-           &Engine::receive_garbage), py::arg("event"))
+            &Engine::receive_garbage), py::arg("event"))
+      .def("receive_random_garbage", &Engine::receive_random_garbage,
+           py::arg("lines"))
       .def("preview_queue", &Engine::preview_queue)
       .def("generate_active_piece_placement", &Engine::generate_active_piece_placement,
            "Reachable hard-drop placements for the active piece.")
@@ -308,6 +332,8 @@ PYBIND11_MODULE(tetris_py, m) {
       .def_property_readonly("back_to_back_count", &Engine::back_to_back_count)
       .def_property_readonly("surge_charge", &Engine::surge_charge)
       .def_property_readonly("tick_count", &Engine::tick_count)
+      .def_property_readonly("guideline_2009", &Engine::guideline_2009)
+      .def_property_readonly("level", &Engine::level)
       .def_property_readonly("pending_garbage_lines", &Engine::pending_garbage_lines)
       .def_property_readonly("pending_garbage_packets", &Engine::pending_garbage_packets)
       .def("pending_garbage", &Engine::pending_garbage,

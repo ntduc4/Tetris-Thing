@@ -58,6 +58,8 @@ private:
   void paint(int row, int col, bool erase);
   void action(size_t player, Input input);
   void repeat(size_t player, const GameConfig &settings);
+  static int horizontal_direction(const HeldKeys &held);
+  void move_spawned_piece(size_t player, const GameConfig &settings);
   bool handle_key(int key, bool pressed);
   void frame();
   void refresh();

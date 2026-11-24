@@ -310,6 +310,7 @@ class RotationRule:
       Off
     """
     Off: typing.ClassVar[RotationRule]
+    Guideline: typing.ClassVar[RotationRule]
     SRSPlus: typing.ClassVar[RotationRule]
     SRSX: typing.ClassVar[RotationRule]
     __members__: typing.ClassVar[dict[str, RotationRule]]
@@ -409,6 +410,7 @@ class SpinRule:
     """
     AllMini: typing.ClassVar[SpinRule]
     AllMiniPlus: typing.ClassVar[SpinRule]
+    Guideline: typing.ClassVar[SpinRule]
     Off: typing.ClassVar[SpinRule]
     TOnly: typing.ClassVar[SpinRule]
     __members__: typing.ClassVar[dict[str, SpinRule]]
@@ -639,6 +641,8 @@ class EngineConfig:
     attack: AttackRule
     attacks: AttackTable
     bag: BagRule
+    guideline_2009: bool
+    level: int
     rotation: RotationRule
     scores: ScoreTable
     spin: SpinRule
@@ -713,6 +717,9 @@ class Offset:
     def row(self) -> int:
         ...
 class SpinContext:
+    @property
+    def guideline_point_five(self) -> bool:
+        ...
     @property
     def kick_offset(self) -> Offset | None:
         ...
@@ -893,6 +900,8 @@ class Engine:
     @typing.overload
     def receive_garbage(self, event: GarbageEvent) -> None:
         ...
+    def receive_random_garbage(self, lines: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
     def render(self) -> list[list[Cell]]:
         """
         Board copy with the active piece overlaid; row zero is the bottom.
@@ -906,6 +915,8 @@ class Engine:
     def set_edit_mode(self, arg0: bool) -> bool:
         ...
     def set_garbage_delay(self, arg0: typing.SupportsInt | typing.SupportsIndex) -> None:
+        ...
+    def set_level(self, level: typing.SupportsInt | typing.SupportsIndex) -> None:
         ...
     def set_gravity(self, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None:
         ...
@@ -954,6 +965,9 @@ class Engine:
     def game_over(self) -> bool:
         ...
     @property
+    def guideline_2009(self) -> bool:
+        ...
+    @property
     def ghost_piece(self) -> ActivePiece | None:
         ...
     @property
@@ -961,6 +975,9 @@ class Engine:
         ...
     @property
     def last_lock_result(self) -> LockResult | None:
+        ...
+    @property
+    def level(self) -> int:
         ...
     @property
     def lines_cleared(self) -> int:

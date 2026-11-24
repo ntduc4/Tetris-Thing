@@ -38,6 +38,41 @@ def placement_key(placement):
 
 
 class BindingsTests(unittest.TestCase):
+    def test_2009_guideline_profile(self):
+        cfg = t.EngineConfig()
+        cfg.guideline_2009 = True
+        cfg.level = 3
+        cfg.rotation = t.RotationRule.Off
+        cfg.bag = t.BagRule.Random
+        cfg.spin = t.SpinRule.Off
+        cfg.attack = t.AttackRule.Season2
+        game = t.Engine(cfg)
+        game.reset(i_piece_seed())
+        self.assertTrue(game.guideline_2009)
+        self.assertEqual(game.level, 3)
+        self.assertTrue(game.spawn_next_piece())
+        self.assertEqual(game.active_piece.piece.type, t.PieceType.I)
+        self.assertFalse(game.try_rotate_180())
+        self.assertTrue(game.set_edit_mode(True))
+        for col in range(10):
+            if col not in (3, 4, 5, 6):
+                self.assertTrue(game.paint_cell(0, col, t.Cell.Garbage))
+        self.assertTrue(game.paint_cell(1, 9, t.Cell.Garbage))
+        self.assertTrue(game.set_edit_mode(False))
+        distance = game.hard_drop_distance()
+        lock = game.hard_drop()
+        self.assertEqual((lock.lines_cleared, lock.attack_sent), (1, 0))
+        self.assertEqual(lock.score_delta, 300 + 2 * distance)
+        game.set_level(5)
+        self.assertEqual(game.level, 5)
+        cfg.height = 24
+        with self.assertRaises(ValueError):
+            t.Engine(cfg)
+        cfg.height = 40
+        cfg.preview_count = 7
+        with self.assertRaises(ValueError):
+            t.Engine(cfg)
+
     def test_guideline_attack_rule_replaces_jstris(self):
         self.assertEqual(t.AttackRule.Guideline.name, "Guideline")
         self.assertFalse(hasattr(t.AttackRule, "Jstris"))
@@ -54,7 +89,7 @@ class BindingsTests(unittest.TestCase):
         self.assertTrue(game.set_edit_mode(False))
         self.assertTrue(game.try_rotate_cw())
         result = game.hard_drop()
-        self.assertEqual((result.lines_cleared, result.attack_packets), (4, [14]))
+        self.assertEqual((result.lines_cleared, result.attack_packets), (4, [4]))
 
     def test_misamino_full_episode_matches_stepwise_search(self):
         cfg = t.EngineConfig()

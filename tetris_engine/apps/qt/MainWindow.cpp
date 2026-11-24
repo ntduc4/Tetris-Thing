@@ -172,7 +172,8 @@ void load_bindings(QSettings &settings, Bindings (&bindings)[2]) {
       used.push_back(key);
     }
   }
-  std::copy(std::begin(loaded), std::end(loaded), bindings);
+  for (int player = 0; player < 2; ++player)
+    bindings[player] = loaded[player];
 }
 
 class BindingsDialog : public QDialog {
@@ -219,7 +220,8 @@ public:
           proposed[player][input] = key;
         }
       }
-      std::copy(std::begin(proposed), std::end(proposed), _bindings);
+      for (int player = 0; player < 2; ++player)
+        _bindings[player] = proposed[player];
       accept();
     });
   }
@@ -345,7 +347,9 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
   auto *help = new QLabel(
        "Default P1: A/D move, S down, W/Q rotate, E 180, C hold, Space drop. "
        "Default P2: ←/→ move, ↓ down, ↑/J rotate, K 180, L hold, Enter drop. "
-      "F = solo draw mode; left-drag paint, right-drag erase.", this);
+       "Keep a direction held through a drop or hold swap to shift the next piece "
+       "immediately once DAS is charged. F = solo draw mode; left-drag paint, "
+       "right-drag erase.", this);
   help->setWordWrap(true);
   outer->addWidget(help);
 
@@ -619,26 +623,35 @@ void MainWindow::paint(int row, int col, bool erase) {
 void MainWindow::action(size_t player, Input input) {
   if ((is_bot_match() && player != 0) || !can_control_bot_match())
     return;
+  const GameConfig &settings = is_bot_match() ? bot_rules() :
+                               is_room() ? _room_rules : _solo_rules;
   Engine *game = current_engine(player);
   if (!game || game->game_over() || game->edit_mode() ||
       (_solo && _solo->finished()) || (_match && _match->round_over()))
     return;
   switch (input) {
-  case Input::Left: game->try_move_left(); break;
-  case Input::Right: game->try_move_right(); break;
+  case Input::Left:
+    game->try_move_left(settings.das == 0 && settings.arr == 0 ? -1 : 1);
+    break;
+  case Input::Right:
+    game->try_move_right(settings.das == 0 && settings.arr == 0 ? -1 : 1);
+    break;
   case Input::Down:
-    game->try_soft_drop((is_bot_match() ? bot_rules() :
-                         is_room() ? _room_rules : _solo_rules).soft_drop);
+    game->try_soft_drop(settings.soft_drop);
     break;
   case Input::CW: game->try_rotate_cw(); break;
   case Input::CCW: game->try_rotate_ccw(); break;
   case Input::Half: game->try_rotate_180(); break;
-  case Input::Hold: game->hold(); break;
+  case Input::Hold:
+    if (game->hold())
+      move_spawned_piece(player, settings);
+    break;
   case Input::Drop:
     if (_match) {
       const LockResult lock = _match->hard_drop(player);
+      if (lock.locked)
+        move_spawned_piece(player, settings);
       if (is_bot_match() && lock.locked && !_match->round_over()) {
-        clear_keys();
         _message->setText(is_model_match() ? "Model thinking…" :
                           "MisaMino thinking…");
         if (is_model_match())
@@ -647,7 +660,8 @@ void MainWindow::action(size_t player, Input input) {
           start_misamino_turn();
       }
     } else {
-      _solo->hard_drop();
+      if (_solo->hard_drop().locked)
+        move_spawned_piece(player, settings);
     }
     break;
   default: break;
@@ -655,17 +669,46 @@ void MainWindow::action(size_t player, Input input) {
   refresh();
 }
 
+int MainWindow::horizontal_direction(const HeldKeys &held) {
+  const bool left = held.down[static_cast<int>(Input::Left)];
+  const bool right = held.down[static_cast<int>(Input::Right)];
+  return left && right ? held.last_horizontal : left ? -1 : right ? 1 : 0;
+}
+
+void MainWindow::move_spawned_piece(size_t player, const GameConfig &settings) {
+  HeldKeys &held = _held[player];
+  const int direction = horizontal_direction(held);
+  if (!direction)
+    return;
+  const int ticks = direction < 0 ? held.left_ticks : held.right_ticks;
+  if (ticks < settings.das)
+    return;
+  Engine *game = current_engine(player);
+  if (!game || !game->active_piece() || game->game_over() ||
+      game->edit_mode() || (_solo && _solo->finished()) ||
+      (_match && _match->round_over()))
+    return;
+  // Carry DAS across generation. ARR keeps its phase, but the new piece gets
+  // its first charged movement immediately instead of waiting for that phase.
+  const int amount = settings.arr == 0 ? -1 : 1;
+  if (direction < 0)
+    game->try_move_left(amount);
+  else
+    game->try_move_right(amount);
+}
+
 void MainWindow::repeat(size_t player, const GameConfig &settings) {
   HeldKeys &held = _held[player];
-  int horizontal = held.down[static_cast<int>(Input::Left)] &&
-                   held.down[static_cast<int>(Input::Right)]
-                       ? held.last_horizontal
-                       : held.down[static_cast<int>(Input::Left)] ? -1
-                       : held.down[static_cast<int>(Input::Right)] ? 1 : 0;
+  const int horizontal = horizontal_direction(held);
   if (horizontal != 0) {
     int &ticks = horizontal < 0 ? held.left_ticks : held.right_ticks;
-    if (++ticks >= std::max(1, settings.das) &&
-        (settings.arr == 0 || (ticks - std::max(1, settings.das)) % settings.arr == 0)) {
+    const int das = std::max(1, settings.das);
+    if (ticks < das)
+      ++ticks;
+    else if (settings.arr != 0)
+      ticks = das + (ticks - das + 1) % settings.arr;
+    // Keep the charged ARR phase bounded, even through many spawned pieces.
+    if (ticks >= das && (settings.arr == 0 || ticks == das)) {
       if (settings.arr == 0) {
         Engine *game = current_engine(player);
         if (game && !game->game_over())
@@ -704,17 +747,35 @@ bool MainWindow::handle_key(int key, bool pressed) {
       if (_bindings[player][i] != key) continue;
       HeldKeys &held = _held[player];
       if (pressed && !held.down[i]) {
+        const int previous = horizontal_direction(held);
         held.down[i] = true;
         if (i == static_cast<int>(Input::Left)) {
-          held.left_ticks = 0;
           held.last_horizontal = -1;
         } else if (i == static_cast<int>(Input::Right)) {
-          held.right_ticks = 0;
           held.last_horizontal = 1;
         }
+        const int current = horizontal_direction(held);
+        if (current != previous) {
+          if (current < 0) held.left_ticks = 0;
+          if (current > 0) held.right_ticks = 0;
+        }
         action(player, static_cast<Input>(i));
-      } else if (!pressed) {
+      } else if (!pressed && held.down[i]) {
+        const int previous = horizontal_direction(held);
+        const bool both_held =
+            held.down[static_cast<int>(Input::Left)] &&
+            held.down[static_cast<int>(Input::Right)];
         held.down[i] = false;
+        const int current = horizontal_direction(held);
+        if (both_held && (i == static_cast<int>(Input::Left) ||
+                          i == static_cast<int>(Input::Right))) {
+          // Either release restarts DAS, but only a change of direction gets
+          // an immediate move. Releasing the inactive key must not move twice.
+          if (current < 0) held.left_ticks = 0;
+          else held.right_ticks = 0;
+          if (current != previous)
+            action(player, current < 0 ? Input::Left : Input::Right);
+        }
       }
       return true;
     }
@@ -727,15 +788,27 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
     clear_keys();
     return QWidget::eventFilter(watched, event);
   }
+  if (event->type() == QEvent::FocusIn &&
+      (qobject_cast<QComboBox *>(watched) ||
+       qobject_cast<QAbstractSpinBox *>(watched) ||
+       qobject_cast<QLineEdit *>(watched) ||
+       qobject_cast<QKeySequenceEdit *>(watched))) {
+    clear_keys();
+  }
   if (event->type() != QEvent::KeyPress && event->type() != QEvent::KeyRelease)
     return QWidget::eventFilter(watched, event);
   if (QApplication::activeModalWidget() || QApplication::activeWindow() != window())
     return QWidget::eventFilter(watched, event);
+  auto *key = static_cast<QKeyEvent *>(event);
   auto *focus = QApplication::focusWidget();
   if (qobject_cast<QComboBox *>(focus) || qobject_cast<QAbstractSpinBox *>(focus) ||
-      qobject_cast<QLineEdit *>(focus) || qobject_cast<QKeySequenceEdit *>(focus))
+      qobject_cast<QLineEdit *>(focus) || qobject_cast<QKeySequenceEdit *>(focus)) {
+    // A key can be released after focus moves from the board into a widget.
+    // Stop charged movement without sending gameplay actions to the widget.
+    if (event->type() == QEvent::KeyRelease && !key->isAutoRepeat())
+      clear_keys();
     return QWidget::eventFilter(watched, event);
-  auto *key = static_cast<QKeyEvent *>(event);
+  }
   if (key->isAutoRepeat())
     return true;
   if (key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))
@@ -755,7 +828,8 @@ void MainWindow::frame() {
   while (_accumulated >= frame_time) {
     if (_solo && !_solo->finished()) {
       if (!_solo->engine().edit_mode()) repeat(0, _solo_rules);
-      _solo->tick();
+      if (_solo->tick().locked)
+        move_spawned_piece(0, _solo_rules);
     }
     if (is_bot_match() && _match && !_match->round_over() &&
         can_control_bot_match()) {
@@ -764,7 +838,10 @@ void MainWindow::frame() {
     if (is_room() && _match && !_match->round_over()) {
       repeat(0, _room_rules);
       repeat(1, _room_rules);
-      _match->tick();
+      const auto results = _match->tick();
+      for (size_t player = 0; player < results.size(); ++player)
+        if (results[player].locked)
+          move_spawned_piece(player, _room_rules);
     }
     _accumulated -= frame_time;
   }

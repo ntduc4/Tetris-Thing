@@ -89,6 +89,10 @@ RulesDialog::RulesDialog(GameConfig &config, bool multiplayer, QWidget *parent)
   _garbage = number(0, 600, game);
   _das = number(0, 60, game);
   _arr = number(0, 60, game);
+  _das->setToolTip("Initial held left/right delay (18 ticks is about 0.3 seconds). "
+                   "Charge carries across locks and hold swaps.");
+  _arr->setToolTip("Held left/right repeat interval. Zero moves to the wall; "
+                   "its timing carries across pieces.");
   _soft = number(1, 80, game);
   _goal = number(1, 1000, game);
   _time = number(1, 3600, game);
@@ -116,7 +120,7 @@ RulesDialog::RulesDialog(GameConfig &config, bool multiplayer, QWidget *parent)
   _rotation = options({"SRS+", "SRS-X", "No rotation"}, rules);
   _rotation->setObjectName("rotationRule");
   _bag = options({"7-bag", "14-bag", "Random"}, rules);
-  _attack = options({"Season 2 (1v1 attack)", "Season 1-like", "Guideline (standard combo)",
+  _attack = options({"Season 2 (1v1 attack)", "Season 1-like", "Guideline (2009 attack)",
                      "Custom table", "No attack"}, rules);
   _attack->setObjectName("attackRule");
   r->addRow("Spin detection:", _spin);
