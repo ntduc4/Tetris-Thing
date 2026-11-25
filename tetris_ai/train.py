@@ -556,7 +556,7 @@ def _(BOARD_WIDTH, PREVIEW_COUNT, nn, np, tetris_py, torch):
                 nn.ReLU(),
                 nn.Linear(128, 1),
             )
-        
+    
         def forward(self, x):
             board = x[:, :self.board_features].reshape(
                 -1, 3, self.height, BOARD_WIDTH
@@ -1327,7 +1327,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    N_EPISODES = 1000
+    N_EPISODES = 59000
     q_train_button = mo.ui.run_button(label=f"Train Q-learning ({N_EPISODES} episodes)")
     mc_train_button = mo.ui.run_button(label=f"Train Monte carlo ({N_EPISODES} episodes)")
     bc_train_button = mo.ui.run_button(
@@ -1731,7 +1731,7 @@ def _(mo, replay_data, replay_slider):
             _lines.append(f"   +{'-' * _width}+")
             _lines.append(f"    {''.join(str(col % 10) for col in range(_width))}")
             return "\n".join(_lines)
-    
+
         _shorten_moves = []
         for move in _frame["moves"]:
             n = len(_shorten_moves)
@@ -1743,7 +1743,7 @@ def _(mo, replay_data, replay_slider):
                 _shorten_moves[n-1] = (move, amt+1)
             else:
                 _shorten_moves.append((move, 1))
-    
+
         _moves = ", ".join(f"{move}{"" if i == 1 else (f"x{i}")}" for move, i in _shorten_moves) or "(hard drop immediately)"
         _replay_view = mo.vstack(
             [
@@ -1831,11 +1831,22 @@ def _(checkpoint_dir, env, mo, refresh_color_replay):
     else:
         _color_controls = mo.md(f"No saved evaluation replay at `{_replay_path}` yet.")
     _color_controls
-    return color_after_lock, color_replay_data, color_replay_slider, color_replay_states
+    return (
+        color_after_lock,
+        color_replay_data,
+        color_replay_slider,
+        color_replay_states,
+    )
 
 
 @app.cell
-def _(color_after_lock, color_replay_data, color_replay_slider, color_replay_states, mo):
+def _(
+    color_after_lock,
+    color_replay_data,
+    color_replay_slider,
+    color_replay_states,
+    mo,
+):
     from replay_visualizer import render_replay
 
     if color_replay_states:

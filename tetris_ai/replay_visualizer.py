@@ -26,7 +26,7 @@ PIECE_SHAPES = {
     "L": ("..L", "LLL"),
 }
 
-GIF_BACKGROUND = "#101a2c"
+GIF_BACKGROUND = "#101010"
 GIF_PANEL = "#18243a"
 GIF_GRID = "#151f32"
 GIF_GRID_LINE = "#29364b"
@@ -84,8 +84,12 @@ def reconstruct_replay(replay, make_env):
             for offset in active.piece.current_shape()
         )
 
+    def board_cells(board):
+        # evaluate_episode stores tuple rows in memory; JSON loads list rows.
+        return tuple(tuple(row) for row in board)
+
     for index, frame in enumerate(replay["frames"]):
-        if [list(row) for row in observation["board"]] != frame["before"]:
+        if board_cells(observation["board"]) != board_cells(frame["before"]):
             raise ValueError(f"Replay board diverged before placement {index + 1}")
         before_active = active_cells(observation)
 
@@ -108,7 +112,7 @@ def reconstruct_replay(replay, make_env):
             )
 
         next_observation, _, terminated, truncated, info = env.step(matches[0])
-        if ([list(row) for row in next_observation["board"]] != frame["after"]
+        if (board_cells(next_observation["board"]) != board_cells(frame["after"])
                 or next_observation["score"] != frame["score"]
                 or info["lines_cleared"] != frame["lines"]):
             raise ValueError(f"Replay board or stats diverged after placement {index + 1}")

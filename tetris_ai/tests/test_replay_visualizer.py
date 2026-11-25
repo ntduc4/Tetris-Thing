@@ -91,6 +91,23 @@ class ReplayVisualizerTests(unittest.TestCase):
         self.assertEqual((states[0]["attack_before"], states[0]["attack_after"]),
                          (0, 3))
 
+    def test_archives_in_memory_evaluation_tuple_boards(self):
+        replay = sample_replay()
+        frame = replay["frames"][0]
+        frame["before"] = tuple(tuple(row) for row in frame["before"])
+        frame["after"] = tuple(tuple(row) for row in frame["after"])
+        replay["episodes_trained"] = 10_000
+        self.assertEqual(len(reconstruct_replay(replay, FakeEnv)), 1)
+        with tempfile.TemporaryDirectory() as directory:
+            json_path, gif_path = save_replay_archive(replay, FakeEnv, directory)
+            self.assertEqual(json.loads(json_path.read_text())["frames"][0]["before"],
+                             [[0, 0], [0, 0]])
+            with Image.open(gif_path) as gif:
+                self.assertEqual(gif.n_frames, 2)
+        frame["after"] = ((0, 0), (0, 0))
+        with self.assertRaisesRegex(ValueError, "diverged after placement"):
+            reconstruct_replay(replay, FakeEnv)
+
     def test_rejects_diverging_boards_and_actions_instead_of_faking_stats(self):
         replay = sample_replay()
         replay["frames"][0]["landing"] = [[1, 1]]
