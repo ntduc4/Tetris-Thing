@@ -297,7 +297,7 @@ def _(tetris_py, torch):
 
 
 
-    return PREVIEW_COUNT, PlacementEnv, device
+    return BOARD_WIDTH, PREVIEW_COUNT, PlacementEnv, device
 
 
 @app.cell
@@ -529,21 +529,40 @@ def _(mo):
 
 
 @app.cell
-def _(PREVIEW_COUNT, nn, np, tetris_py):
+def _(BOARD_WIDTH, PREVIEW_COUNT, nn, np, tetris_py, torch):
+    SCALAR_FEATURES = 85  # Current features after the three board planes
+
     class PlacementQFunction(nn.Module):
         def __init__(self, feature_dim):
             super().__init__()
-            self.layers = nn.Sequential(
-                nn.Linear(feature_dim, 1024),
+            board_features = feature_dim - SCALAR_FEATURES
+            board_height, remainder = divmod(board_features, 3 * BOARD_WIDTH)
+            if remainder or board_height < 4:
+                raise ValueError("Unexpected board feature size")
+
+            self.height = board_height
+            self.board_features = board_features
+            self.spatial = nn.Sequential(
+                nn.Conv2d(3, 32, kernel_size=3, padding=1),
                 nn.ReLU(),
-                nn.Linear(1024, 512),
+                nn.Conv2d(32, 32, kernel_size=3, padding=1),
                 nn.ReLU(),
-                nn.Linear(512, 128),
+                nn.Flatten(),  # Retains exact row and column positions
+                nn.Linear(32 * board_height * BOARD_WIDTH, 128),
                 nn.ReLU(),
-                nn.Linear(128, 1)
             )
+            self.head = nn.Sequential(
+                nn.Linear(128 + SCALAR_FEATURES, 128),
+                nn.ReLU(),
+                nn.Linear(128, 1),
+            )
+        
         def forward(self, x):
-            return self.layers(x).squeeze(-1)
+            board = x[:, :self.board_features].reshape(
+                -1, 3, self.height, BOARD_WIDTH
+            )
+            other = x[:, self.board_features:]
+            return self.head(torch.cat((self.spatial(board), other), dim=1)).squeeze(-1)
 
     def encode(observation, placement: tetris_py.Placement) -> np.ndarray:
         # Keep this feature order paired with ENCODING_VERSION in checkpoints.
@@ -613,7 +632,7 @@ def _(PREVIEW_COUNT, nn, np, tetris_py):
         ))
 
     gamma = 0.99
-    ENCODING_VERSION = 4
+    ENCODING_VERSION = 5
     return ENCODING_VERSION, PlacementQFunction, encode, gamma
 
 
@@ -1230,6 +1249,23 @@ def _(ENCODING_VERSION, PlacementQFunction, device, feature_dim, gamma, torch):
     return checkpoint_dir, init_training_model, save_training_model
 
 
+@app.cell
+def _(checkpoint_dir, env, evaluate_episode):
+    from replay_visualizer import save_replay_archive
+
+    def archive_evaluation_replay(model, episodes_trained, training_method):
+        """Save a separate greedy replay and color GIF at a 10k milestone."""
+        replay = evaluate_episode(model)
+        replay["episodes_trained"] = episodes_trained
+        replay["training_method"] = training_method
+        return save_replay_archive(
+            replay, lambda: type(env)(piece_cap=env.piece_cap),
+            checkpoint_dir / "replays",
+        )
+
+    return (archive_evaluation_replay,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -1281,7 +1317,9 @@ def _(mo):
     100 total episodes, evaluate greedily on three fixed seeds and atomically
     update `shared/latest.pt`. Archive immutable models in `shared/models/`
     every 1,000 total episodes; keep evaluation summaries in
-    `shared/evaluations.jsonl`. A final partial batch also updates `latest.pt`.
+    `shared/evaluations.jsonl`. Every 10,000 episodes, archive an evaluation
+    replay JSON and colored animated GIF in `shared/replays/`. A final partial
+    batch also updates `latest.pt`.
     Survival is measured in placed pieces, since this mode has zero gravity.
     """)
     return
@@ -1289,11 +1327,11 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    N_EPISODES = 39200
+    N_EPISODES = 1000
     q_train_button = mo.ui.run_button(label=f"Train Q-learning ({N_EPISODES} episodes)")
     mc_train_button = mo.ui.run_button(label=f"Train Monte carlo ({N_EPISODES} episodes)")
     bc_train_button = mo.ui.run_button(
-        label=f"Train behavioural cloning ({N_EPISODES//40} episodes)"
+        label=f"Train behavioural cloning ({N_EPISODES//50} episodes)"
     )
     mo.hstack([q_train_button, mc_train_button, bc_train_button], justify="start")
     return N_EPISODES, bc_train_button, mc_train_button, q_train_button
@@ -1302,6 +1340,7 @@ def _(mo):
 @app.cell
 def _(
     N_EPISODES,
+    archive_evaluation_replay,
     bc_train_button,
     checkpoint_dir,
     env,
@@ -1332,7 +1371,7 @@ def _(
     trained_model, trained_optimizer, completed_episodes = init_training_model(
         training_method
     )
-    episodes_this_run = (N_EPISODES // 40) if bc_train_button.value else N_EPISODES
+    episodes_this_run = (N_EPISODES // 50) if bc_train_button.value else N_EPISODES
     if episodes_this_run < 1:
         raise ValueError("At least one training episode is required")
     episodes_trained = completed_episodes + episodes_this_run
@@ -1342,6 +1381,13 @@ def _(
         _archive = checkpoint_dir / "models" / f"episodes_{_milestone:06d}.pt"
         if _archive.exists():
             raise FileExistsError(f"Refusing to overwrite {_archive}")
+    for _milestone in range(
+        (completed_episodes // 10_000 + 1) * 10_000, episodes_trained + 1, 10_000
+    ):
+        for _suffix in (".json", ".gif"):
+            _archive = checkpoint_dir / "replays" / f"episodes_{_milestone:06d}{_suffix}"
+            if _archive.exists():
+                raise FileExistsError(f"Refusing to overwrite {_archive}")
 
     _train_env = type(env)(piece_cap=env.piece_cap)  # Leave the demo board alone.
     trained_model.train()
@@ -1384,6 +1430,11 @@ def _(
                 training_method, trained_model, trained_optimizer, _finished,
                 latest_evaluation, save_history=(_finished % 1_000 == 0),
             )
+            if _finished % 10_000 == 0:
+                _replay_json, _replay_gif = archive_evaluation_replay(
+                    trained_model, _finished, training_method,
+                )
+                print(f"Archived replay {_replay_json} and GIF {_replay_gif}")
             print(
                 f"{training_method}: {_episode - completed_episodes + 1}/"
                 f"{episodes_this_run} episodes; saved latest at {_finished}"
@@ -1680,7 +1731,7 @@ def _(mo, replay_data, replay_slider):
             _lines.append(f"   +{'-' * _width}+")
             _lines.append(f"    {''.join(str(col % 10) for col in range(_width))}")
             return "\n".join(_lines)
-        
+    
         _shorten_moves = []
         for move in _frame["moves"]:
             n = len(_shorten_moves)
@@ -1692,7 +1743,7 @@ def _(mo, replay_data, replay_slider):
                 _shorten_moves[n-1] = (move, amt+1)
             else:
                 _shorten_moves.append((move, 1))
-        
+    
         _moves = ", ".join(f"{move}{"" if i == 1 else (f"x{i}")}" for move, i in _shorten_moves) or "(hard drop immediately)"
         _replay_view = mo.vstack(
             [
@@ -1728,6 +1779,73 @@ def _(mo, replay_data, replay_slider):
     else:
         _replay_view = mo.md("No placements to display.")
     _replay_view
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Color evaluation replay
+
+    Load the saved `replays/eval.json` without starting training. Scrub through
+    the placements, or switch between the chosen landing and the board after
+    the lock. Hold, next queue, and attack stats are recovered by replaying the
+    saved seed in a separate environment; the training game is not touched.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    refresh_color_replay = mo.ui.run_button(label="Reload saved color replay")
+    refresh_color_replay
+    return (refresh_color_replay,)
+
+
+@app.cell
+def _(checkpoint_dir, env, mo, refresh_color_replay):
+    from json import loads as _load_replay_json
+    from replay_visualizer import reconstruct_replay
+
+    _ = refresh_color_replay.value
+    _replay_path = checkpoint_dir / "replays" / "eval.json"
+    if _replay_path.is_file():
+        color_replay_data = _load_replay_json(_replay_path.read_text())
+        color_replay_states = reconstruct_replay(
+            color_replay_data, lambda: type(env)(piece_cap=env.piece_cap)
+        )
+    else:
+        color_replay_data = {"frames": []}
+        color_replay_states = []
+
+    _count = len(color_replay_data["frames"])
+    color_replay_slider = mo.ui.slider(
+        start=0, stop=max(1, _count - 1), step=1, value=0,
+        disabled=_count < 2, show_value=True, label="Placement index",
+    )
+    color_after_lock = mo.ui.switch(label="After lock / line clear")
+    if _count:
+        _color_controls = mo.hstack(
+            [color_replay_slider, color_after_lock], justify="start"
+        )
+    else:
+        _color_controls = mo.md(f"No saved evaluation replay at `{_replay_path}` yet.")
+    _color_controls
+    return color_after_lock, color_replay_data, color_replay_slider, color_replay_states
+
+
+@app.cell
+def _(color_after_lock, color_replay_data, color_replay_slider, color_replay_states, mo):
+    from replay_visualizer import render_replay
+
+    if color_replay_states:
+        _color_panel = mo.Html(render_replay(
+            color_replay_data, color_replay_states,
+            int(color_replay_slider.value), after=color_after_lock.value,
+        ))
+    else:
+        _color_panel = mo.md("No saved placements to display.")
+    _color_panel
     return
 
 

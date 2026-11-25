@@ -343,6 +343,7 @@ class TrainingEvaluationTests(unittest.TestCase):
 
             result = loop(
                 N_EPISODES=215,
+                archive_evaluation_replay=lambda *_: self.fail("No 10k milestone"),
                 bc_train_button=SimpleNamespace(value=False),
                 checkpoint_dir=Path(directory),
                 env=FakeEnv(),
@@ -365,6 +366,71 @@ class TrainingEvaluationTests(unittest.TestCase):
             self.assertIsNone(result[1])
             self.assertEqual(result[2], Path("latest.pt"))
 
+    def test_training_loop_archives_replay_once_at_each_crossed_10k_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            saves = []
+            archives = []
+            seeds = []
+            model = SimpleNamespace(train=lambda: None)
+            result = training_loop({})(
+                N_EPISODES=4,
+                archive_evaluation_replay=lambda passed_model, count, method: (
+                    archives.append((passed_model, count, method))
+                    or (root / f"replays/episodes_{count:06d}.json",
+                        root / f"replays/episodes_{count:06d}.gif")
+                ),
+                bc_train_button=SimpleNamespace(value=False),
+                checkpoint_dir=root, env=FakeEnv(),
+                evaluate_benchmark=lambda _: sample_evaluation(),
+                gamma=0.99,
+                init_training_model=lambda _: (model, object(), 9_998),
+                mc_train_button=SimpleNamespace(value=False),
+                mo=SimpleNamespace(stop=lambda condition, message: None,
+                                   md=lambda text: text),
+                q_train_button=SimpleNamespace(value=True),
+                save_training_model=lambda method, passed_model, optimizer, count,
+                                           evaluation, save_history: (
+                    saves.append((count, save_history))
+                    or (root / "latest.pt", root / f"models/episodes_{count:06d}.pt"
+                        if save_history else None)
+                ),
+                train_an_episode_behaviour_cloning=lambda **kwargs: None,
+                train_an_episode_monte_carlo=lambda **kwargs: None,
+                train_an_episode_q_learning=lambda **kwargs:
+                    seeds.append(kwargs["seed"]),
+            )
+            self.assertEqual(saves, [(10_000, True), (10_002, False)])
+            self.assertEqual(archives, [(model, 10_000, "q_learning")])
+            self.assertEqual(seeds, [19_998, 19_999, 20_000, 20_001])
+            self.assertEqual(result[0], 10_002)
+
+            gif = root / "replays/episodes_010000.gif"
+            gif.parent.mkdir()
+            gif.write_bytes(b"existing replay")
+            with self.assertRaisesRegex(FileExistsError, "episodes_010000.gif"):
+                training_loop({})(
+                    N_EPISODES=1,
+                    archive_evaluation_replay=lambda *_:
+                        self.fail("Must refuse overwrite before training"),
+                    bc_train_button=SimpleNamespace(value=False),
+                    checkpoint_dir=root, env=FakeEnv(),
+                    evaluate_benchmark=lambda _: sample_evaluation(),
+                    gamma=0.99,
+                    init_training_model=lambda _: (model, object(), 9_999),
+                    mc_train_button=SimpleNamespace(value=False),
+                    mo=SimpleNamespace(stop=lambda condition, message: None,
+                                       md=lambda text: text),
+                    q_train_button=SimpleNamespace(value=True),
+                    save_training_model=lambda *_args, **_kwargs:
+                        self.fail("Must refuse overwrite before saving"),
+                    train_an_episode_behaviour_cloning=lambda **kwargs: None,
+                    train_an_episode_monte_carlo=lambda **kwargs: None,
+                    train_an_episode_q_learning=lambda **kwargs:
+                        self.fail("Must refuse overwrite before training"),
+                )
+            self.assertEqual(gif.read_bytes(), b"existing replay")
+
     def test_cloning_saves_short_final_batch_without_archive(self):
         with tempfile.TemporaryDirectory() as directory:
             saves = []
@@ -372,6 +438,7 @@ class TrainingEvaluationTests(unittest.TestCase):
             loop = training_loop({})
             result = loop(
                 N_EPISODES=89,
+                archive_evaluation_replay=lambda *_: self.fail("No 10k milestone"),
                 bc_train_button=SimpleNamespace(value=True),
                 checkpoint_dir=Path(directory),
                 env=FakeEnv(),
@@ -396,9 +463,9 @@ class TrainingEvaluationTests(unittest.TestCase):
                 train_an_episode_q_learning=lambda **kwargs:
                     self.fail("Wrong training method"),
             )
-            self.assertEqual(seeds, [22_010, 22_011])
-            self.assertEqual(saves, [("behaviour_cloning", 12_012, False)])
-            self.assertEqual(result[0], 12_012)
+            self.assertEqual(seeds, [22_010])
+            self.assertEqual(saves, [("behaviour_cloning", 12_011, False)])
+            self.assertEqual(result[0], 12_011)
 
     def test_existing_archive_stops_before_training(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -410,6 +477,7 @@ class TrainingEvaluationTests(unittest.TestCase):
             with self.assertRaisesRegex(FileExistsError, "episodes_013000"):
                 loop(
                     N_EPISODES=10,
+                    archive_evaluation_replay=lambda *_: self.fail("Already archived"),
                     bc_train_button=SimpleNamespace(value=False),
                     checkpoint_dir=root,
                     env=FakeEnv(),
