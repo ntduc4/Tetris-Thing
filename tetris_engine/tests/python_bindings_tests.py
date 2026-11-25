@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 
 import tetris_py as t
 
@@ -404,6 +405,43 @@ class BindingsTests(unittest.TestCase):
             self.assertEqual(
                 opening["active_piece"], int(t.PieceType.__members__[active]))
         self.assertEqual(chosen, {"I", "J"})
+        gated = Env(clean_garbage_layers=(1, 2), clean_garbage_chance=0.4,
+                    cheese_garbage_layers=(1, 3), cheese_garbage_chance=0.25)
+        plain_env = Env()
+        combinations = set()
+        for seed in range(100):
+            rng = random.Random(seed ^ 0xA0761D6478BD642F)
+            clean = rng.randint(1, 2) if rng.random() < 0.4 else 0
+            cheese = rng.randint(1, 3) if rng.random() < 0.25 else 0
+            combinations.add((bool(clean), bool(cheese)))
+            obs = gated.reset(seed)
+            self.assertEqual(obs, gated.reset(seed))
+            self.assertTrue(all(row.count(int(t.Cell.Empty)) == 1
+                                for row in obs["board"][:clean + cheese]))
+            self.assertTrue(all(cell == int(t.Cell.Empty)
+                                for row in obs["board"][clean + cheese:]
+                                for cell in row))
+            if clean > 1:
+                holes = [[col for col, cell in enumerate(obs["board"][row])
+                          if cell == int(t.Cell.Empty)] for row in range(clean)]
+                self.assertEqual(holes[0], holes[1])
+            plain = plain_env.reset(seed)
+            self.assertEqual(obs["active_piece"], plain["active_piece"])
+            self.assertEqual(obs["preview"], plain["preview"])
+        self.assertEqual(combinations, {(False, False), (True, False),
+                                         (False, True), (True, True)})
+        never = Env(clean_garbage_layers=2, clean_garbage_chance=0,
+                    cheese_garbage_layers=3, cheese_garbage_chance=0)
+        self.assertEqual(never.reset(42), Env().reset(42))
+        always = Env(clean_garbage_layers=2, clean_garbage_chance=1,
+                     cheese_garbage_layers=3, cheese_garbage_chance=1)
+        self.assertTrue(all(row.count(int(t.Cell.Empty)) == 1
+                            for row in always.reset(42)["board"][:5]))
+        full_height = SpinSetup(("." * 10,) * 20, ("overhang",) * 20,
+                                "T", None, "")
+        self.assertIsNotNone(Env(spin_setups=(full_height,), spin_chance=1,
+                                 clean_garbage_layers=1,
+                                 clean_garbage_chance=0).reset(42))
         with self.assertRaisesRegex(ValueError, "top_is_spin"):
             env.reset(42, spin_setup=setup, top_is_spin=False)
         self.assertTrue(env.done)
@@ -411,10 +449,110 @@ class BindingsTests(unittest.TestCase):
             Env(spin_chance=1)
         with self.assertRaises(ValueError):
             Env(cheese_garbage_layers=(3, 2))
+        for name in ("clean_garbage_chance", "cheese_garbage_chance"):
+            for invalid in (-0.1, 1.1, float("nan"), float("inf"), True, "0.5"):
+                with self.assertRaisesRegex(ValueError, name):
+                    Env(**{name: invalid})
         with self.assertRaises(ValueError):
-            Env(spin_setups=(SpinSetup(("." * 10,) * 20,
-                                      ("overhang",) * 20, "T", None, ""),),
+            Env(spin_setups=(full_height,),
                 spin_chance=1, clean_garbage_layers=1).reset(42)
+
+    def test_action_viewer_tracks_post_step_snapshot(self):
+        notebook = ast.parse((Path(__file__).resolve().parents[2] /
+                              "tetris_ai/train.py").read_text())
+        env_cell = next(node for node in notebook.body
+                        if isinstance(node, ast.FunctionDef) and
+                        any(isinstance(child, ast.ClassDef) and
+                            child.name == "PlacementEnv" for child in node.body))
+        classes = [child for child in env_cell.body
+                   if isinstance(child, ast.ClassDef) and
+                   child.name in ("EnvCheckpoint", "PlacementEnv")]
+        namespace = {
+            "tetris_py": t, "dataclass": dataclass,
+            "BOARD_WIDTH": 10, "BOARD_HEIGHT": 40, "PREVIEW_COUNT": 5,
+        }
+        exec(compile(ast.Module(body=classes, type_ignores=[]),
+                     "train.py", "exec"), namespace)
+        Env = namespace["PlacementEnv"]
+
+        def cell_with_inputs(*inputs):
+            return next(node for node in notebook.body
+                        if isinstance(node, ast.FunctionDef) and
+                        set(inputs) <= {arg.arg for arg in node.args.args})
+
+        def compile_cell(node):
+            node.decorator_list = []
+            exec(compile(ast.Module(body=[node], type_ignores=[]),
+                         "train.py", "exec"), namespace)
+            return namespace["_"]
+
+        action_controls = compile_cell(cell_with_inputs("mo", "get_viewer_checkpoint"))
+        action_preview = compile_cell(cell_with_inputs(
+            "available_placements", "viewer_engine", "placement_index", "show_hidden"))
+
+        class FakeMo:
+            ui = SimpleNamespace(
+                slider=lambda **kwargs: SimpleNamespace(**kwargs),
+                checkbox=lambda **kwargs: SimpleNamespace(value=False, **kwargs))
+
+            @staticmethod
+            def md(text):
+                return text
+
+            @staticmethod
+            def hstack(*args, **kwargs):
+                return None
+
+            @staticmethod
+            def vstack(*args, **kwargs):
+                return None
+
+        env = Env(piece_cap=3)
+        env.reset(42)
+        opening_checkpoint = env.checkpoint()
+        first_actions = env.legal_placements()
+        viewer_state = {"checkpoint": opening_checkpoint}
+        get_viewer_checkpoint = lambda: viewer_state["checkpoint"]
+        opening_actions, slider, hidden, viewer = action_controls(
+            get_viewer_checkpoint, FakeMo())
+        self.assertEqual(opening_checkpoint.pieces_placed, 0)
+        self.assertEqual(opening_actions[0].type, first_actions[0].type)
+        self.assertEqual(viewer.board.render(), opening_checkpoint.engine.board.render())
+        action_preview(opening_actions, FakeMo(), slider, hidden, viewer)
+        self.assertEqual(env.pieces_placed, 0)
+
+        env.step(first_actions[0])
+        checkpoint = env.checkpoint()
+        viewer_state["checkpoint"] = checkpoint
+        actions, slider, hidden, viewer = action_controls(get_viewer_checkpoint, FakeMo())
+        self.assertTrue(actions)
+        self.assertEqual(slider.stop, len(actions) - 1)
+        self.assertEqual(viewer.board.render(), checkpoint.engine.board.render())
+        self.assertEqual(actions[0].type, viewer.active_piece.piece.type)
+        self.assertNotEqual(first_actions[0].type, actions[0].type)
+        with self.assertRaisesRegex(ValueError, "piece type does not match"):
+            viewer.clone().apply_placement(first_actions[0])
+        before = env.observe()
+        action_preview(actions, FakeMo(), slider, hidden, viewer)
+        self.assertEqual(env.observe(), before)
+        self.assertEqual(viewer.board.render(), checkpoint.engine.board.render())
+
+        env.step(env.legal_placements()[0])
+        viewer_state["checkpoint"] = env.checkpoint()
+        actions, slider, hidden, viewer = action_controls(get_viewer_checkpoint, FakeMo())
+        self.assertTrue(actions)
+        self.assertEqual(slider.stop, len(actions) - 1)
+        action_preview(actions, FakeMo(), slider, hidden, viewer)
+        self.assertEqual(viewer.board.render(), env._engine.board.render())
+
+        finished = Env(piece_cap=1)
+        finished.reset(42)
+        finished.step(finished.legal_placements()[0])
+        viewer_state["checkpoint"] = finished.checkpoint()
+        actions, slider, hidden, viewer = action_controls(get_viewer_checkpoint, FakeMo())
+        self.assertFalse(actions)
+        self.assertIsNone(slider)
+        self.assertIsNone(action_preview(actions, FakeMo(), slider, hidden, viewer))
 
     def test_2009_guideline_profile(self):
         cfg = t.EngineConfig()

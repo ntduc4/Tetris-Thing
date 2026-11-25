@@ -106,6 +106,57 @@ class ConstantModel(torch.nn.Module):
 
 
 class TrainingEvaluationTests(unittest.TestCase):
+    def test_demo_step_is_opt_in_and_viewer_starts_at_opening(self):
+        cell = next(
+            node for node in NOTEBOOK.body
+            if isinstance(node, ast.FunctionDef)
+            and {"run_demo_step", "set_viewer_checkpoint"} <=
+                {arg.arg for arg in node.args.args}
+        )
+        cell = copy.deepcopy(cell)
+        cell.decorator_list = []
+        namespace = {}
+        exec(compile(ast.Module(body=[cell], type_ignores=[]),
+                     "train.py", "exec"), namespace)
+        demo_step = namespace["_"]
+
+        class DemoEnv(FakeEnv):
+            @property
+            def pieces_placed(self):
+                return self.pieces
+
+            def checkpoint(self):
+                return SimpleNamespace(pieces_placed=self.pieces)
+
+        env = DemoEnv()
+        observation = env.reset(42)
+        opening = env.checkpoint()
+        published = []
+        device = torch.device("cpu")
+        model = torch.nn.Sequential(torch.nn.Linear(1, 1),
+                                    torch.nn.Flatten(0, 1))
+        optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
+
+        def run(clicked):
+            return demo_step(
+                action=0, chosen_index=0, device=device,
+                encode=lambda state, action: np.array([action + 1], dtype=np.float32),
+                env=env, gamma=0.99,
+                np=np, observation=observation, optimizer=optimizer,
+                q_online=model, run_demo_step=SimpleNamespace(value=clicked),
+                scores=torch.zeros(2), set_viewer_checkpoint=published.append,
+                torch=torch,
+            )
+
+        run(False)
+        self.assertEqual(published, [])
+        self.assertEqual(opening.pieces_placed, 0)
+        self.assertEqual(env.pieces, 0)
+        run(True)
+        self.assertEqual((env.pieces, published[-1].pieces_placed), (1, 1))
+        run(True)
+        self.assertEqual((env.pieces, len(published)), (1, 1))
+
     def test_training_charts_use_round_y_axis_intervals(self):
         chart = notebook_helper("evaluation_chart", {
             "escape": escape, "math": math,

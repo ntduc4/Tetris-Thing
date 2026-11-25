@@ -52,7 +52,8 @@ def _(tetris_py, torch):
         """
 
         def __init__(self, piece_cap=500, *, spin_setups=(), spin_chance=0.0,
-                     clean_garbage_layers=(0, 0), cheese_garbage_layers=(0, 0)):
+                     clean_garbage_layers=(0, 0), cheese_garbage_layers=(0, 0),
+                     clean_garbage_chance=1.0, cheese_garbage_chance=1.0):
             if not isinstance(piece_cap, int) or piece_cap < 1:
                 raise ValueError("piece_cap must be a positive integer")
             import math
@@ -67,15 +68,19 @@ def _(tetris_py, torch):
                     raise ValueError(f"{name} must be 0..20 or a (min, max) range")
                 return value
 
+            def probability(value, name):
+                if (isinstance(value, bool) or
+                        not isinstance(value, (int, float)) or
+                        not math.isfinite(value) or not 0 <= value <= 1):
+                    raise ValueError(f"{name} must be between 0 and 1")
+                return value
+
             if isinstance(spin_setups, SpinSetup):
                 spin_setups = (spin_setups,)
             self.spin_setups = tuple(spin_setups)
             if any(not isinstance(setup, SpinSetup) for setup in self.spin_setups):
                 raise TypeError("spin_setups must contain loaded SpinSetup templates")
-            if (isinstance(spin_chance, bool) or
-                    not isinstance(spin_chance, (int, float)) or
-                    not math.isfinite(spin_chance) or not 0 <= spin_chance <= 1):
-                raise ValueError("spin_chance must be between 0 and 1")
+            spin_chance = probability(spin_chance, "spin_chance")
             if spin_chance and not self.spin_setups:
                 raise ValueError("spin_chance requires at least one spin setup")
             self.spin_chance = spin_chance
@@ -83,6 +88,10 @@ def _(tetris_py, torch):
                 clean_garbage_layers, "clean_garbage_layers")
             self.cheese_garbage_layers = layer_range(
                 cheese_garbage_layers, "cheese_garbage_layers")
+            self.clean_garbage_chance = probability(
+                clean_garbage_chance, "clean_garbage_chance")
+            self.cheese_garbage_chance = probability(
+                cheese_garbage_chance, "cheese_garbage_chance")
             config = tetris_py.EngineConfig()
             config.width = BOARD_WIDTH
             config.height = BOARD_HEIGHT
@@ -125,8 +134,18 @@ def _(tetris_py, torch):
                 if not self.spin_setups:
                     raise ValueError("top_is_spin=True requires spin_setups or spin_setup")
                 spin_setup = rng.choice(self.spin_setups)
-            clean = rng.randint(*self.clean_garbage_layers)
-            cheese = rng.randint(*self.cheese_garbage_layers)
+
+            def choose_layers(layer_range, chance):
+                # A 100% gate consumes no extra RNG, preserving existing
+                # seeded layer counts when the new chance option is omitted.
+                if chance == 0 or (chance < 1 and rng.random() >= chance):
+                    return 0
+                return rng.randint(*layer_range)
+
+            clean = choose_layers(
+                self.clean_garbage_layers, self.clean_garbage_chance)
+            cheese = choose_layers(
+                self.cheese_garbage_layers, self.cheese_garbage_chance)
             height = spin_setup.height if use_spin else 0
             if clean + cheese + height > 20:
                 raise ValueError("Opening template and garbage exceed 20 visible rows")
@@ -276,11 +295,25 @@ def _(tetris_py, torch):
                 reward -= 50.0
             return self.observe(), reward, terminated, truncated, info
 
-    env = PlacementEnv()
+
+
+    return PREVIEW_COUNT, PlacementEnv, device
+
+
+@app.cell
+def _(PlacementEnv, device, load_spin_setup, mo):
+    from pathlib import Path
+
+    spin_dir = Path("../tetris_engine/spin_setups")  # From tetris_ai/
+    setups = tuple(load_spin_setup(p) for p in sorted(spin_dir.glob("*.json")))
+
+    env = PlacementEnv(
+        spin_setups=setups, spin_chance=0.25,
+        cheese_garbage_layers=(2, 4), cheese_garbage_chance=0.05, clean_garbage_chance=0.25, clean_garbage_layers=(4,4))
     initial_observation = env.reset(seed=42)
-    available_placements = env.legal_placements()
-    (device, len(initial_observation["board"]), len(available_placements))
-    return PREVIEW_COUNT, PlacementEnv, available_placements, device, env
+    get_viewer_checkpoint, set_viewer_checkpoint = mo.state(env.checkpoint())
+    (device, len(initial_observation["board"]), len(env.legal_placements()))
+    return env, get_viewer_checkpoint, set_viewer_checkpoint
 
 
 @app.cell(hide_code=True)
@@ -293,10 +326,14 @@ def _(mo):
     independent `PlacementEnv` opening. Each reset chooses a seeded horizontal
     offset and mirror; S/Z and J/L scripted pieces mirror with the drawing,
     then the seeded 7-bag resumes. `PlacementEnv(spin_setups=(...), spin_chance=...,
-    clean_garbage_layers=(min, max), cheese_garbage_layers=(min, max))` chooses
+    clean_garbage_layers=(min, max), clean_garbage_chance=...,
+    cheese_garbage_layers=(min, max), cheese_garbage_chance=...)` chooses
     the opening per seed; `reset(seed, top_is_spin=True/False)` can override it.
-    Garbage sits below any selected spin template. Normal training and
-    evaluation remain unchanged until explicitly configured.
+    Each garbage type has an independent chance gate, then a seeded layer count.
+    Use a minimum of 1 for an exact chance of appearing; a minimum of 0 can
+    still produce no garbage after its chance gate passes. Garbage sits below
+    any selected spin template. Normal training and evaluation remain unchanged
+    until explicitly configured.
     """)
     return
 
@@ -351,103 +388,133 @@ def _(
 
 
 @app.cell
-def _(available_placements, mo):
-    if not available_placements:
-        raise RuntimeError("No placements available for the current game state")
-
-    placement_index = mo.ui.slider(
-        start=0,
-        stop=len(available_placements) - 1,
-        step=1,
-        value=0,
-        show_value=True,
-        label=f"Placement index (0–{len(available_placements) - 1})",
-    )
-    show_hidden = mo.ui.checkbox(label="Show all rows (including hidden rows)")
-    mo.hstack([placement_index, show_hidden], justify="start")
-    return placement_index, show_hidden
+def _(get_viewer_checkpoint, mo):
+    # Read the opening before the lower demo cells run. A clicked demo step
+    # publishes a new snapshot, refreshing this viewer without a dependency
+    # on the lower training cell.
+    viewer_checkpoint = get_viewer_checkpoint()
+    viewer_engine = viewer_checkpoint.engine
+    available_placements = ()
+    placement_index = None
+    show_hidden = None
+    if viewer_checkpoint.done:
+        _viewer_controls = mo.md(
+            "The current episode has ended; no placements are available.")
+    else:
+        active = viewer_engine.generate_active_piece_placement()
+        held = (viewer_engine.generate_hold_piece_placement()
+                if viewer_engine.can_hold else [])
+        available_placements = tuple(active + held)
+        if not available_placements:
+            _viewer_controls = mo.md(
+                "No placements are available for the current game state.")
+        else:
+            placement_index = mo.ui.slider(
+                start=0,
+                stop=len(available_placements) - 1,
+                step=1,
+                value=0,
+                show_value=True,
+                label=f"Placement index (0–{len(available_placements) - 1})",
+            )
+            show_hidden = mo.ui.checkbox(label="Show all rows (including hidden rows)")
+            _viewer_controls = mo.vstack([
+                mo.md(f"Current state: {viewer_checkpoint.pieces_placed} piece(s) "
+                      "placed. Letters on the board are locked cells."),
+                mo.hstack([placement_index, show_hidden], justify="start"),
+            ])
+    _viewer_controls
+    return available_placements, placement_index, show_hidden, viewer_engine
 
 
 @app.cell
-def _(available_placements, env, mo, placement_index, show_hidden):
-    placement = available_placements[int(placement_index.value)]
-    before = env.observe()["board"]
-    landing = {(cell.row, cell.col) for cell in placement.cells()}
-    height, width = len(before), len(before[0])
-    if len(landing) != 4 or any(
-        not (0 <= row < height and 0 <= col < width) or before[row][col] != 0
-        for row, col in landing
-    ):
-        raise RuntimeError("Selected placement overlaps the locked board or is out of bounds")
+def _(available_placements, mo, placement_index, show_hidden, viewer_engine):
+    def render_action():
+        if not available_placements:
+            return mo.md("No placements to preview in this state.")
 
-    # A clone is an engine checkpoint. Applying the placement here never
-    # modifies env or spawns an unrevealed next piece.
-    preview = env.checkpoint().engine
-    active = preview.active_piece
-    active_cells = {
-        (active.pos.row + offset.row, active.pos.col + offset.col)
-        for offset in active.piece.current_shape()
-    } if active is not None else set()
-    lock = preview.apply_placement(placement)
-    if not lock.locked:
-        raise RuntimeError("Engine did not lock the selected placement")
-    after = tuple(tuple(int(cell) for cell in row) for row in preview.board.render())
-    if env.observe()["board"] != before:
-        raise RuntimeError("Placement preview modified the live environment")
+        placement = available_placements[int(placement_index.value)]
+        before = tuple(tuple(int(cell) for cell in row)
+                       for row in viewer_engine.board.render())
+        landing = {(cell.row, cell.col) for cell in placement.cells()}
+        height, width = len(before), len(before[0])
+        if len(landing) != 4 or any(
+            not (0 <= row < height and 0 <= col < width) or before[row][col] != 0
+            for row, col in landing
+        ):
+            raise RuntimeError("Selected placement overlaps the locked board or is out of bounds")
 
-    symbols = ".IOTSZJLGX"  # Empty, tetrominoes, garbage, unclearable.
-    rows = height if show_hidden.value or any(row >= 20 for row, _ in landing) else min(20, height)
+        # Both the action list and board come from the same checkpoint.
+        # Applying the placement to a clone never modifies the viewer or live env.
+        preview = viewer_engine.clone()
+        active = preview.active_piece
+        active_cells = {
+            (active.pos.row + offset.row, active.pos.col + offset.col)
+            for offset in active.piece.current_shape()
+        } if active is not None else set()
+        lock = preview.apply_placement(placement)
+        if not lock.locked:
+            raise RuntimeError("Engine did not lock the selected placement")
+        after = tuple(tuple(int(cell) for cell in row) for row in preview.board.render())
+        if tuple(tuple(int(cell) for cell in row)
+                 for row in viewer_engine.board.render()) != before:
+            raise RuntimeError("Placement preview modified its source checkpoint")
 
-    def board_text(board, overlay=frozenset(), falling=frozenset()):
-        lines = [f"   +{'-' * width}+"]
-        for row in range(rows - 1, -1, -1):
-            cells = "".join(
-                "@" if (row, col) in overlay
-                else "a" if (row, col) in falling
-                else symbols[board[row][col]]
-                for col in range(width)
-            )
-            lines.append(f"{row:02d} |{cells}|")
-        lines.append(f"   +{'-' * width}+")
-        lines.append(f"    {''.join(str(col % 10) for col in range(width))}")
-        return "\n".join(lines)
+        symbols = ".IOTSZJLGX"  # Empty, tetrominoes, garbage, unclearable.
+        rows = height if show_hidden.value or any(row >= 20 for row, _ in landing) else min(20, height)
 
-    move_names = ", ".join(move.name for move in placement.moves) or "(hard drop immediately)"
-    kick = placement.spin_context.kick_offset
-    kick_text = "none" if kick is None else f"({kick.row}, {kick.col})"
-    mo.vstack(
-        [
-            mo.md(
-                f"**Placement {int(placement_index.value) + 1}/{len(available_placements)}** "
-                f"— {placement.type.name}, hold: {placement.use_hold}, "
-                f"rotation: {placement.final_rotation.name}, "
-                f"root (row, col): ({placement.final_pos.row}, {placement.final_pos.col}), "
-                f"drop distance: {placement.drop_distance}.  \n"
-                f"Moves: {move_names}. Last movement: {placement.spin_context.last_movement.name}; "
-                f"kick: {kick_text}.  \n"
-                f"**Engine result:** lines {lock.lines_cleared}, score +{lock.score_delta}, "
-                f"attack {lock.attack_sent}, spin {lock.spin.name}, "
-                f"perfect clear: {lock.perfect_clear}."
-            ),
-            mo.hstack(
-                [
-                    mo.md(
-                        "**Before: active (`a`), chosen landing (`@`)**\n```text\n"
-                        + board_text(before, landing, active_cells)
-                        + "\n```"
-                    ),
-                    mo.md("**After lock/line clear**\n```text\n" + board_text(after) + "\n```"),
-                ],
-                justify="start",
-                widths="equal",
-            ),
-            mo.md(
-                "`.` empty, letters locked cells (`G` garbage), `a` active piece, "
-                "`@` chosen landing. Row 0 is at the bottom. "
-                "The post-lock board includes line clears; no next piece is spawned."
-            ),
-        ]
-    )
+        def board_text(board, overlay=frozenset(), falling=frozenset()):
+            lines = [f"   +{'-' * width}+"]
+            for row in range(rows - 1, -1, -1):
+                cells = "".join(
+                    "@" if (row, col) in overlay
+                    else "a" if (row, col) in falling
+                    else symbols[board[row][col]]
+                    for col in range(width)
+                )
+                lines.append(f"{row:02d} |{cells}|")
+            lines.append(f"   +{'-' * width}+")
+            lines.append(f"    {''.join(str(col % 10) for col in range(width))}")
+            return "\n".join(lines)
+
+        move_names = ", ".join(move.name for move in placement.moves) or "(hard drop immediately)"
+        kick = placement.spin_context.kick_offset
+        kick_text = "none" if kick is None else f"({kick.row}, {kick.col})"
+        return mo.vstack(
+            [
+                mo.md(
+                    f"**Placement {int(placement_index.value) + 1}/{len(available_placements)}** "
+                    f"— {placement.type.name}, hold: {placement.use_hold}, "
+                    f"rotation: {placement.final_rotation.name}, "
+                    f"root (row, col): ({placement.final_pos.row}, {placement.final_pos.col}), "
+                    f"drop distance: {placement.drop_distance}.  \n"
+                    f"Moves: {move_names}. Last movement: {placement.spin_context.last_movement.name}; "
+                    f"kick: {kick_text}.  \n"
+                    f"**Engine result:** lines {lock.lines_cleared}, score +{lock.score_delta}, "
+                    f"attack {lock.attack_sent}, spin {lock.spin.name}, "
+                    f"perfect clear: {lock.perfect_clear}."
+                ),
+                mo.hstack(
+                    [
+                        mo.md(
+                            "**Before: active (`a`), chosen landing (`@`)**\n```text\n"
+                            + board_text(before, landing, active_cells)
+                            + "\n```"
+                        ),
+                        mo.md("**After lock/line clear**\n```text\n" + board_text(after) + "\n```"),
+                    ],
+                    justify="start",
+                    widths="equal",
+                ),
+                mo.md(
+                    "`.` empty, letters locked cells (`G` garbage), `a` active piece, "
+                    "`@` chosen landing. Row 0 is at the bottom. "
+                    "The post-lock board includes line clears; no next piece is spawned."
+                ),
+            ]
+        )
+
+    render_action()
     return
 
 
@@ -559,10 +626,19 @@ def _(mo):
 
 
 @app.cell
-def _(PlacementQFunction, device, encode, env, np, torch):
+def _(
+    PlacementQFunction,
+    device,
+    encode,
+    env,
+    np,
+    set_viewer_checkpoint,
+    torch,
+):
     # import numpy as np
 
     observation = env.reset(seed=42)
+    set_viewer_checkpoint(env.checkpoint())
     actions = env.legal_placements()
 
     feature_dim = len(encode(observation, actions[0]))
@@ -595,9 +671,19 @@ def _(PlacementQFunction, device, encode, env, np, torch):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Training step
+    ## Training step (optional)
+
+    The action viewer above starts at the untouched opening. Click below to
+    apply the selected demo action and view the resulting board and next actions.
     """)
     return
+
+
+@app.cell
+def _(mo):
+    run_demo_step = mo.ui.run_button(label="Apply demo action and training step")
+    run_demo_step
+    return (run_demo_step,)
 
 
 @app.cell
@@ -612,34 +698,38 @@ def _(
     observation,
     optimizer,
     q_online,
+    run_demo_step,
     scores,
+    set_viewer_checkpoint,
     torch,
 ):
     import torch.nn.functional as F
 
-    # Batch dimension
-    current_input = torch.as_tensor(
-        encode(observation, action), dtype=torch.float32, device=device
-    ).unsqueeze(0)
+    # Marimo schedules cells by dependencies, not display order. The button
+    # keeps the demo from locking a piece just by opening the notebook.
+    if run_demo_step.value and env.pieces_placed == 0:
+        current_input = torch.as_tensor(
+            encode(observation, action), dtype=torch.float32, device=device
+        ).unsqueeze(0)
+        next_observation, reward, terminated, truncated, info = env.step(action)
+        set_viewer_checkpoint(env.checkpoint())
+        prediction = q_online(current_input)[0] # [0] for turning [1] -> scalar
+                                                # Without no_grad to keep gradient
 
-    next_observation, reward, terminated, truncated, info = env.step(action)
-    prediction = q_online(current_input)[0] # [0] for turning [1] -> scalar
-                                            # Without no_grad to keep gradient
+        with torch.no_grad():
+            if terminated or truncated:
+                target = torch.tensor(reward, dtype=torch.float32, device=device)
+            else:
+                next_actions = env.legal_placements()
+                next_features = np.stack([encode(next_observation, a) for a in next_actions])
+                next_batch = torch.as_tensor(next_features, dtype=torch.float32, device=device)
+                target = reward + gamma * q_online(next_batch).max()
+                print(scores.shape, chosen_index)
 
-    with torch.no_grad():
-        if terminated or truncated:
-            target = torch.tensor(reward, dtype=torch.float32, device=device)
-        else:
-            next_actions = env.legal_placements()
-            next_features = np.stack([encode(next_observation, a) for a in next_actions])
-            next_batch = torch.as_tensor(next_features, dtype=torch.float32, device=device)
-            target = reward + gamma * q_online(next_batch).max()
-            print(scores.shape, chosen_index)
-
-    loss = F.smooth_l1_loss(prediction, target)
-    optimizer.zero_grad(set_to_none=True)
-    loss.backward()
-    optimizer.step()
+        loss = F.smooth_l1_loss(prediction, target)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
     return (F,)
 
 
@@ -1199,7 +1289,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    N_EPISODES = 31400
+    N_EPISODES = 39200
     q_train_button = mo.ui.run_button(label=f"Train Q-learning ({N_EPISODES} episodes)")
     mc_train_button = mo.ui.run_button(label=f"Train Monte carlo ({N_EPISODES} episodes)")
     bc_train_button = mo.ui.run_button(
@@ -1284,7 +1374,7 @@ def _(
                 optimizer=trained_optimizer,
                 training_env=_train_env,
                 gamma=gamma,
-                epsilon=0.05,
+                epsilon=0.1,
                 explore_random=True,
             )
         _finished = _episode + 1
@@ -1590,8 +1680,20 @@ def _(mo, replay_data, replay_slider):
             _lines.append(f"   +{'-' * _width}+")
             _lines.append(f"    {''.join(str(col % 10) for col in range(_width))}")
             return "\n".join(_lines)
-
-        _moves = ", ".join(_frame["moves"]) or "(hard drop immediately)"
+        
+        _shorten_moves = []
+        for move in _frame["moves"]:
+            n = len(_shorten_moves)
+            if n == 0:
+                _shorten_moves.append((move, 1))
+                continue
+            last_move, amt = _shorten_moves[n-1]
+            if last_move == move:
+                _shorten_moves[n-1] = (move, amt+1)
+            else:
+                _shorten_moves.append((move, 1))
+        
+        _moves = ", ".join(f"{move}{"" if i == 1 else (f"x{i}")}" for move, i in _shorten_moves) or "(hard drop immediately)"
         _replay_view = mo.vstack(
             [
                 mo.md(
