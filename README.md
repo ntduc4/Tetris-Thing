@@ -74,7 +74,7 @@ placed across the three games, so a high value does not imply long survival.
 Window figures below average the logged per-evaluation metrics, rather than
 pooling all games into one ratio.
 
-![Seven equal-sized training windows comparing score, pieces, and cap rate](imgs/v5-window-comparison.png)
+![Seven training windows comparing score, pieces, and cap rate](imgs/v5-window-comparison.png)
 
 The v5 window chart covers **all 49k episodes** in seven consecutive,
 equal-sized blocks: each bar averages **70 evaluations over 7,000 training
