@@ -1,8 +1,8 @@
 """CPU-only inference worker for the Qt turn-based match.
 
-One JSON line in contains public board state and engine-generated placements;
-one JSON line out contains the index of the highest-scoring placement. No
-engine, notebook, optimizer, or hidden piece source is loaded in this process.
+V5 scores roots, then scores Qt-simulated continuations for the best six.
+V3 checkpoints keep the original one-request greedy protocol. No engine,
+notebook, optimizer, or hidden piece source is loaded in this process.
 """
 
 import json
@@ -10,6 +10,7 @@ import sys
 
 import numpy as np
 import torch
+from torch import nn
 from torch.nn import functional as F
 
 
@@ -18,6 +19,7 @@ BOARD_WIDTH = 10
 PREVIEW_COUNT = 5
 # Three board planes plus the fixed active/hold/preview/action fields in v3.
 FIXED_FEATURES = 79
+V5_FEATURES = 85
 
 
 def encode(observation, placement):
@@ -73,8 +75,11 @@ def encode(observation, placement):
     ))
 
 
-def board_height_from_features(feature_dim):
-    cells, remainder = divmod(feature_dim - FIXED_FEATURES, 3 * BOARD_WIDTH)
+def board_height_from_features(feature_dim, version=3):
+    cells, remainder = divmod(
+        feature_dim - (V5_FEATURES if version == 5 else FIXED_FEATURES),
+        3 * BOARD_WIDTH,
+    )
     if remainder or not 4 <= cells <= 80:
         raise ValueError("Checkpoint feature size is not a supported 10-column board")
     return cells
@@ -82,11 +87,17 @@ def board_height_from_features(feature_dim):
 
 def load_weights(path):
     checkpoint = torch.load(path, map_location="cpu", weights_only=True)
-    if checkpoint.get("encoding_version") != ENCODING_VERSION:
+    version = checkpoint.get("encoding_version")
+    if version not in (3, 5):
         raise ValueError("Checkpoint encoding version is not supported")
     feature_dim = checkpoint["feature_dim"]
-    height = board_height_from_features(feature_dim)
+    height = board_height_from_features(feature_dim, version)
     state = checkpoint["model"]
+    if version == 5:
+        model = PlacementCNN(feature_dim)
+        model.load_state_dict(state)
+        model.eval()
+        return model, height
     layers = []
     sizes = (feature_dim, 1024, 512, 128, 1)
     for index, (size_in, size_out) in enumerate(
@@ -99,20 +110,65 @@ def load_weights(path):
     return layers, height
 
 
-def choose(observation, layers, height):
+class PlacementCNN(nn.Module):
+    """The v5 notebook architecture, with its checkpoint feature order."""
+
+    def __init__(self, feature_dim):
+        super().__init__()
+        height = board_height_from_features(feature_dim, 5)
+        self.board_features = 3 * height * BOARD_WIDTH
+        self.height = height
+        self.spatial = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(32, 32, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Flatten(), nn.Linear(32 * height * BOARD_WIDTH, 128), nn.ReLU(),
+        )
+        self.head = nn.Sequential(
+            nn.Linear(128 + V5_FEATURES, 128), nn.ReLU(), nn.Linear(128, 1),
+        )
+
+    def forward(self, x):
+        board = x[:, :self.board_features].reshape(-1, 3, self.height, BOARD_WIDTH)
+        return self.head(torch.cat(
+            (self.spatial(board), x[:, self.board_features:]), dim=1
+        )).squeeze(-1)
+
+
+def encode_v5(observation, placement):
+    base = encode(observation, placement)
+    b2b = float(observation["back_to_back"])
+    state = np.array([
+        b2b,
+        np.log1p(observation["back_to_back_count"]) / np.log1p(20.0),
+        np.log1p(observation["combo"]) / np.log1p(20.0),
+    ], dtype=np.float32)
+    spin = np.zeros(3, dtype=np.float32)
+    spin[placement["spin"]] = 1
+    return np.concatenate((base, state, spin))
+
+
+def score_actions(observation, layers, height):
     board = np.asarray(observation["board"])
     if board.shape != (height, BOARD_WIDTH) or not observation["actions"]:
         raise ValueError("Board dimensions do not match the checkpoint")
-    features = np.stack([encode(observation, action) for action in observation["actions"]])
-    if features.shape[1] != layers[0][0].shape[1]:
-        raise ValueError("Model feature size mismatch")
+    encoder = encode_v5 if isinstance(layers, PlacementCNN) else encode
+    features = np.stack([encoder(observation, a) for a in observation["actions"]])
     with torch.inference_mode():
         scores = torch.from_numpy(features)
+        if isinstance(layers, PlacementCNN):
+            return layers(scores).tolist()
+        if features.shape[1] != layers[0][0].shape[1]:
+            raise ValueError("Model feature size mismatch")
         for index, (weight, bias) in enumerate(layers):
             scores = F.linear(scores, weight, bias)
             if index < len(layers) - 1:
                 scores = F.relu(scores)
-        return int(scores.squeeze(-1).argmax().item())
+        return scores.squeeze(-1).tolist()
+
+
+def choose(observation, layers, height):
+    scores = score_actions(observation, layers, height)
+    return max(range(len(scores)), key=scores.__getitem__)
 
 
 def main():
@@ -122,8 +178,24 @@ def main():
         print(json.dumps({"ready": True, "width": BOARD_WIDTH, "height": height}),
               flush=True)
         for line in sys.stdin:
-            print(json.dumps({"index": choose(json.loads(line), layers, height)}),
-                  flush=True)
+            request = json.loads(line)
+            if request.get("phase") == "roots" and isinstance(layers, PlacementCNN):
+                scores = score_actions(request, layers, height)
+                shortlist = sorted(range(len(scores)), key=scores.__getitem__,
+                                   reverse=True)[:6]
+                result = {"shortlist": shortlist, "scores": scores}
+            elif request.get("phase") == "leaves" and isinstance(layers, PlacementCNN):
+                scores = list(request["scores"])
+                for branch in request["branches"]:
+                    index = branch["root"]
+                    value = branch["reward"]
+                    if branch.get("state") is not None:
+                        value += 0.99 * max(score_actions(branch["state"], layers, height))
+                    scores[index] = value
+                result = {"index": max(range(len(scores)), key=scores.__getitem__)}
+            else:
+                result = {"index": choose(request, layers, height)}
+            print(json.dumps(result), flush=True)
     except Exception as error:
         print(json.dumps({"error": str(error)}), flush=True)
         return 1

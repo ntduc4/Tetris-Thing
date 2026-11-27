@@ -556,7 +556,7 @@ def _(BOARD_WIDTH, PREVIEW_COUNT, nn, np, tetris_py, torch):
                 nn.ReLU(),
                 nn.Linear(128, 1),
             )
-    
+
         def forward(self, x):
             board = x[:, :self.board_features].reshape(
                 -1, 3, self.height, BOARD_WIDTH
@@ -1327,7 +1327,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    N_EPISODES = 59000
+    N_EPISODES = 49000
     q_train_button = mo.ui.run_button(label=f"Train Q-learning ({N_EPISODES} episodes)")
     mc_train_button = mo.ui.run_button(label=f"Train Monte carlo ({N_EPISODES} episodes)")
     bc_train_button = mo.ui.run_button(
@@ -1394,6 +1394,7 @@ def _(
     latest_evaluation = None
     latest_checkpoint = None
     latest_archive = None
+    _one_time = True
     for _episode in range(completed_episodes, episodes_trained):
         if training_method == "q_learning":
             train_an_episode_q_learning(
@@ -1430,7 +1431,8 @@ def _(
                 training_method, trained_model, trained_optimizer, _finished,
                 latest_evaluation, save_history=(_finished % 1_000 == 0),
             )
-            if _finished % 10_000 == 0:
+            if _finished % 10_000 == 0 or _one_time:
+                _one_time = False
                 _replay_json, _replay_gif = archive_evaluation_replay(
                     trained_model, _finished, training_method,
                 )

@@ -63,6 +63,8 @@ class ModelOpponentTests(unittest.TestCase):
                     "can_hold": not use_hold,
                     "preview": [6, 5, 4, 3, 2],
                     "pending_garbage_lines": 8,
+                    "back_to_back": True, "back_to_back_count": 3,
+                    "combo": 2,
                 }
                 candidate = {
                     "type": 1,
@@ -71,6 +73,7 @@ class ModelOpponentTests(unittest.TestCase):
                     "use_hold": use_hold,
                     "drop_distance": 7,
                     "cells": cells,
+                    "spin": 0,
                 }
                 placement = SimpleNamespace(
                     type=candidate["type"],
@@ -78,13 +81,57 @@ class ModelOpponentTests(unittest.TestCase):
                     final_pos=SimpleNamespace(row=-1, col=4),
                     use_hold=use_hold,
                     drop_distance=7,
+                    spin=0,
                     cells=lambda: [SimpleNamespace(row=row, col=col)
                                    for row, col in cells],
                 )
                 np.testing.assert_array_equal(
-                    qt_opponent.encode(request, candidate),
+                    qt_opponent.encode_v5(request, candidate),
                     encode_reference(request, placement),
                 )
+
+    def test_v5_search_protocol_ranks_simulated_followups(self):
+        torch = qt_opponent.torch
+        model = qt_opponent.PlacementCNN(1285)
+        for parameter in model.parameters():
+            parameter.data.zero_()
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "latest.pt"
+            torch.save({"feature_dim": 1285, "encoding_version": 5,
+                        "model": model.state_dict()}, checkpoint)
+            request = {
+                "phase": "roots", "board": [[0] * 10 for _ in range(40)],
+                "active_piece": 0, "rotation": 0, "position": [20, 3],
+                "hold_piece": None, "can_hold": True,
+                "preview": [1, 2, 3, 4, 5], "pending_garbage_lines": 0,
+                "back_to_back": False, "back_to_back_count": 0, "combo": 0,
+                "actions": [
+                    {"type": 0, "final_rotation": 0, "final_pos": [0, col],
+                     "drop_distance": 20, "use_hold": False, "spin": 0,
+                     "cells": [[0, col + offset] for offset in range(4)]}
+                    for col in (0, 3)
+                ],
+            }
+            with subprocess.Popen(
+                [sys.executable, str(ROOT / "qt_opponent.py"), str(checkpoint)],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+            ) as process:
+                self.assertEqual(json.loads(process.stdout.readline()),
+                                 {"ready": True, "width": 10, "height": 40})
+                process.stdin.write(json.dumps(request) + "\n")
+                process.stdin.flush()
+                roots = json.loads(process.stdout.readline())
+                self.assertEqual(set(roots["shortlist"]), {0, 1})
+                process.stdin.write(json.dumps({
+                    "phase": "leaves", "scores": roots["scores"],
+                    "branches": [{"root": 0, "reward": -1},
+                                 {"root": 1, "reward": 3,
+                                  "state": {**request, "preview": [2, 3, 4, 5]}}],
+                }) + "\n")
+                process.stdin.flush()
+                self.assertEqual(json.loads(process.stdout.readline()),
+                                 {"index": 1})
+            self.assertEqual(process.returncode, 0)
 
     def test_board_height_is_encoded_in_checkpoint_size(self):
         self.assertEqual(qt_opponent.board_height_from_features(379), 10)

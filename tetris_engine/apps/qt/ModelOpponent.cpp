@@ -60,8 +60,8 @@ void ModelOpponent::start() {
   const QString script = QFileInfo(setting(
       "TETRIS_MODEL_SCRIPT", ai_dir.filePath("qt_opponent.py"))).absoluteFilePath();
   const QString checkpoint = QFileInfo(setting(
-      "TETRIS_MODEL_CHECKPOINT",
-      ai_dir.filePath("checkpoints/encoding_v3/shared/latest.pt"))).absoluteFilePath();
+       "TETRIS_MODEL_CHECKPOINT",
+       ai_dir.filePath("checkpoints/encoding_v5/shared/latest.pt"))).absoluteFilePath();
   if (!QFileInfo(script).isFile() || !QFileInfo(checkpoint).isFile()) {
     fail(QString("Missing model script or checkpoint: %1 / %2").arg(script, checkpoint));
     return;
@@ -90,6 +90,7 @@ void ModelOpponent::choose(const Engine &game) {
     fail("No legal model placement.");
     return;
   }
+  _snapshot = std::make_unique<Engine>(game.clone());
 
   const auto &active = game.active_piece();
   if (!active) {
@@ -123,6 +124,7 @@ void ModelOpponent::choose(const Engine &game) {
   }
   const auto hold = game.hold_piece();
   const QJsonObject request{
+      {"phase", "roots"},
       {"board", board},
       {"active_piece", static_cast<int>(active->piece.type())},
       {"rotation", static_cast<int>(active->piece.rotation())},
@@ -131,6 +133,9 @@ void ModelOpponent::choose(const Engine &game) {
       {"can_hold", game.can_hold()},
       {"preview", preview},
       {"pending_garbage_lines", static_cast<int>(game.pending_garbage_lines())},
+      {"combo", static_cast<int>(game.combo())},
+      {"back_to_back", game.back_to_back()},
+      {"back_to_back_count", static_cast<int>(game.back_to_back_count())},
       {"actions", actions},
   };
   _waiting = true;
@@ -172,6 +177,108 @@ void ModelOpponent::read_output() {
       _on_ready(response.value("height").toInt());
       continue;
     }
+    if (_waiting && response.value("shortlist").isArray() && _snapshot) {
+      const QJsonArray scores = response.value("scores").toArray();
+      if (scores.size() != static_cast<qsizetype>(_placements.size())) {
+        fail("Invalid model search scores.");
+        return;
+      }
+      const QJsonArray root_preview = [&] {
+        QJsonArray result;
+        for (PieceType piece : _snapshot->preview_queue())
+          result.append(static_cast<int>(piece));
+        return result;
+      }();
+      QJsonArray branches;
+      for (const QJsonValue candidate : response.value("shortlist").toArray()) {
+        const int index = candidate.toInt(-1);
+        if (index < 0 || static_cast<size_t>(index) >= _placements.size()) {
+          fail("Invalid model search candidate.");
+          return;
+        }
+        Engine work = _snapshot->clone();
+        const int before_height = work.board().max_height();
+        const int before_b2b = work.back_to_back_count();
+        const bool empty_hold = !work.hold_piece();
+        const auto &placement = _placements[index];
+        const auto lock = work.apply_placement(placement);
+        if (!lock.locked) {
+          fail("Could not simulate model placement.");
+          return;
+        }
+        const int consumed = 1 + static_cast<int>(placement.use_hold && empty_hold);
+        if (!work.game_over() && root_preview.size() < consumed)
+          continue; // Keep the root Q score; the next piece is not public.
+        if (!work.game_over())
+          work.spawn_next_piece();
+        const bool terminal = work.game_over();
+        const double reward = 2.0 * lock.attack_sent +
+            (static_cast<int>(work.back_to_back_count()) - before_b2b) +
+            lock.lines_cleared -
+            0.1 * (work.board().max_height() - before_height) +
+            0.05 - (terminal ? 50.0 : 0.0);
+        QJsonObject branch{{"root", index}, {"reward", reward}};
+        // Never inspect newly generated preview pieces. Empty-hold branches
+        // consume an extra known piece before the next active piece spawns.
+        if (!terminal && root_preview.size() >= consumed && work.active_piece()) {
+          QJsonArray child_preview;
+          for (int i = consumed; i < root_preview.size(); ++i)
+            child_preview.append(root_preview[i]);
+          QJsonArray child_actions;
+          auto placements = work.generate_active_piece_placement();
+          if (work.can_hold() && (work.hold_piece() || !child_preview.isEmpty())) {
+            auto held = work.generate_hold_piece_placement();
+            placements.insert(placements.end(), held.begin(), held.end());
+          }
+          for (const Placement &action : placements) {
+            QJsonArray cells;
+            for (Position cell : action.cells())
+              cells.append(position(cell.row, cell.col));
+            child_actions.append(QJsonObject{
+                {"type", static_cast<int>(action.type)},
+                {"final_rotation", static_cast<int>(action.final_rotation)},
+                {"final_pos", position(action.final_pos.row, action.final_pos.col)},
+                {"drop_distance", static_cast<int>(action.drop_distance)},
+                {"use_hold", action.use_hold},
+                {"spin", static_cast<int>(action.spin)}, {"cells", cells},
+            });
+          }
+          if (!child_actions.isEmpty()) {
+            QJsonArray child_board;
+            for (const auto &row : work.board().render()) {
+              QJsonArray cells;
+              for (Cell cell : row)
+                cells.append(static_cast<int>(cell));
+              child_board.append(cells);
+            }
+            const auto &active = *work.active_piece();
+            const auto hold = work.hold_piece();
+            branch.insert("state", QJsonObject{
+                {"board", child_board},
+                {"active_piece", static_cast<int>(active.piece.type())},
+                {"rotation", static_cast<int>(active.piece.rotation())},
+                {"position", position(active.pos.row, active.pos.col)},
+                {"hold_piece", hold ? QJsonValue(static_cast<int>(*hold))
+                                    : QJsonValue(QJsonValue::Null)},
+                {"can_hold", work.can_hold()}, {"preview", child_preview},
+                {"pending_garbage_lines", static_cast<int>(work.pending_garbage_lines())},
+                {"combo", static_cast<int>(work.combo())},
+                {"back_to_back", work.back_to_back()},
+                {"back_to_back_count", static_cast<int>(work.back_to_back_count())},
+                {"actions", child_actions},
+            });
+          }
+        }
+        branches.append(branch);
+      }
+      const QJsonObject request{{"phase", "leaves"}, {"scores", scores},
+                                {"branches", branches}};
+      if (_process.write(QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n') < 0)
+        fail(_process.errorString());
+      else
+        _timeout.start(60000);
+      continue;
+    }
     const QJsonValue value = response.value("index");
     const int index = value.toInt(-1);
     if (!_waiting || !value.isDouble() || index < 0 ||
@@ -183,6 +290,7 @@ void ModelOpponent::read_output() {
     _timeout.stop();
     const Placement chosen = _placements[index];
     _placements.clear();
+    _snapshot.reset();
     _on_choice(chosen);
   }
 }
@@ -195,6 +303,7 @@ void ModelOpponent::fail(const QString &reason) {
   _ready = false;
   _timeout.stop();
   _placements.clear();
+  _snapshot.reset();
   if (_process.state() != QProcess::NotRunning)
     _process.kill();
   _on_error(reason);

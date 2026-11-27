@@ -469,8 +469,8 @@ def save_replay_archive(replay, make_env, replay_dir):
     from PIL import GifImagePlugin
 
     episode = int(replay["episodes_trained"])
-    if episode < 1 or episode % 10_000:
-        raise ValueError("Replay archives are written at 10,000-episode milestones")
+    # if episode < 1 or episode % 10_000:
+    #     raise ValueError("Replay archives are written at 10,000-episode milestones")
     if not replay["frames"]:
         raise ValueError("Cannot archive an empty replay")
     replay_dir = Path(replay_dir)

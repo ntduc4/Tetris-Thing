@@ -108,7 +108,9 @@ int main(int argc, char **argv) {
   check(log.open(QIODevice::ReadOnly), "the fake worker must receive a request");
   auto request = QJsonDocument::fromJson(log.readLine()).object();
   const auto serialized_action = request.value("actions").toArray().first().toObject();
-  check(request.keys().size() == 9 &&
+  check(request.value("phase").toString() == "roots" &&
+            request.contains("combo") && request.contains("back_to_back") &&
+            request.contains("back_to_back_count") &&
             request.value("board").toArray().size() == 10 &&
             request.value("preview").toArray().size() == 5 &&
             request.value("actions").toArray().size() > 0 &&
@@ -232,8 +234,8 @@ int main(int argc, char **argv) {
     mode->setCurrentIndex(5);
     check(QTest::qWaitFor([&] { return message->text().contains("Model ready"); }, 30000),
           "the actual saved model should load in the Qt app");
-    check(window.current_engine(0)->board().get_height() == 10,
-          "the current checkpoint should restore its original 10-row board");
+    check(window.current_engine(0)->board().get_height() == 40,
+          "the latest v5 checkpoint should restore its 40-row board");
     QTest::keyClick(&window, Qt::Key_Space);
     check(QTest::qWaitFor([&] {
             return window.current_engine(1)->board().max_height() > 0;

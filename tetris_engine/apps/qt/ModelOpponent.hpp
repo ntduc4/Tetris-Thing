@@ -7,6 +7,7 @@
 #include <QTimer>
 
 #include <functional>
+#include <memory>
 #include <vector>
 
 namespace tetris::qtapp {
@@ -33,6 +34,7 @@ private:
   QTimer _timeout;
   QByteArray _output, _errors;
   std::vector<Placement> _placements;
+  std::unique_ptr<Engine> _snapshot;
   std::function<void(int)> _on_ready;
   std::function<void(const Placement &)> _on_choice;
   std::function<void(const QString &)> _on_error;
